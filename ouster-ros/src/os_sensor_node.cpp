@@ -624,7 +624,7 @@ void OusterSensor::parse_lidar_mode(SensorConfig& config) {
     }
 
     auto lidar_mode = ouster::sdk::core::lidar_mode_of_string(lidar_mode_arg);
-    if (lidar_mode == LidarMode::MODE_UNSPEC) {
+    if (lidar_mode == LidarMode::UNSPECIFIED) {
         auto error_msg = "Invalid lidar mode: " + lidar_mode_arg;
         RCLCPP_FATAL_STREAM(get_logger(), error_msg);
         throw std::runtime_error(error_msg);
