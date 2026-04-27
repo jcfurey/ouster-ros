@@ -85,6 +85,7 @@ if (BUILD_PCAP)
 endif()
 
 add_library(ouster_ros_library SHARED
+  src/impl/file_util.cpp
   src/os_ros.cpp
 )
 
