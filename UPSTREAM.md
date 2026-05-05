@@ -151,9 +151,40 @@ the default for everyone.
 - The `plumb_bob` choice is load-bearing for the `lidar_image_panels`
   package — do not revert to `equidistant` without revisiting that
   consumer's rectification pipeline.
+- The corrected `fy` from `beam_altitude_angles` (commit `fde48f6`) is
+  similarly load-bearing for `lidar_image_panels`'s panel auto-height
+  calculation — reverting to the upstream `H/(2π)` formula would inflate
+  the panels' computed source vFOV by ~10× on the OS1-16.
 - The Ouster driver is **source-built** here (the apt
   `ros-jazzy-ouster-ros` binary is no longer installed in the image); see
   the `Dockerfile` if you need to disable the source build temporarily.
+
+## Out of scope: panel splitting / virtual cameras lives downstream
+
+A recurring question is whether this fork should also emit cardinal-
+direction "virtual camera" panels (front/left/rear/right pinhole sub-
+images) directly from the image node. The workspace's answer is **no** —
+that feature is implemented as a separate downstream node,
+`src/packages/perception/lidar_image_panels`, and gated by the
+`run_lidar_image_panels` env flag. Reasons in summary; full rationale in
+that package's `README.md`:
+
+- Keeps this fork **upstream-trackable** (small surgical patches) rather
+  than promoting it to a structural divergence no upstream PR would land.
+- The splitter works on **any** equirectangular LiDAR source
+  (`ouster-ros` on hardware, `gz_sensors_ouster` in sim, etc.), not just
+  this driver — vendor independence would be lost by in-driver
+  implementation.
+- Driver job (publish raw data) is conceptually distinct from perception/
+  visualization (re-project into virtual cameras). ROS already enforces
+  this split for camera drivers vs. `image_proc`.
+- The latency win (~1–2 ms saved on a publish/subscribe round trip) is
+  not measurable on the workspace's i7 NUC at 10 Hz / 16 beams.
+
+The architectural boundary the workspace settled on:
+**this driver publishes the raw equirectangular panorama + correct
+`CameraInfo`; everything that re-projects, slices, crops, or virtualizes
+views happens downstream.**
 
 ## Sync procedure
 
