@@ -194,15 +194,19 @@ class OusterImage : public OusterProcessingNodeBase {
         camera_info_msg_.header.frame_id = frame_id;
         camera_info_msg_.height = H;
         camera_info_msg_.width = W;
-        // The equirect projection isn't really pinhole OR equidistant
-        // fisheye, but "equidistant" with all-zero D coefficients hints
-        // to Foxglove/Trillium to treat the image as a wide-FOV camera
-        // (curved/wrapped) rather than a flat plumb_bob plane. Closest
-        // match to "this is a panoramic image" we can express in a
-        // standard ROS CameraInfo. Tracked as a known approximation —
-        // a true cylindrical projection would need a custom model that
-        // isn't part of any common ROS distortion_model spec.
-        camera_info_msg_.distortion_model = "equidistant";
+        // "equirectangular" is a Trillium-specific extension (not part of
+        // any standard ROS distortion_model spec). Trillium's PinholeCameraModel
+        // recognizes it and projects (u, v) → (azimuth, elevation) on a unit
+        // sphere instead of a tangent plane, so the 360° panorama renders as
+        // a curved cylinder/sphere mesh in the 3D Scene panel rather than
+        // a flat plane. K encodes the linear pixel↔angle mapping:
+        //   fx = W / (2π)        — 1 px == 2π/W rad of azimuth
+        //   fy = H / vfov_rad    — 1 px == vfov/H rad of elevation
+        //   (cx, cy) = principal point in pixels
+        // D is 5 zeros (no Brown-Conrady distortion is applied; Trillium
+        // ignores D for this model). Stock RViz / image_pipeline will reject
+        // the unknown model name — that's fine, only Trillium consumes it.
+        camera_info_msg_.distortion_model = "equirectangular";
         camera_info_msg_.k = {fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0};
         camera_info_msg_.d = {0.0, 0.0, 0.0, 0.0, 0.0};
         camera_info_msg_.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};

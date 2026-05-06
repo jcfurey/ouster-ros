@@ -21,7 +21,7 @@ git rebase upstream/ros2                   # pick up new upstream work
 
 ## Local divergence
 
-Eight commits sit on top of upstream `ros2`. Read in the same order they apply:
+Nine commits sit on top of upstream `ros2`. Read in the same order they apply:
 
 | Commit    | Category   | Subject                                                              |
 |-----------|------------|----------------------------------------------------------------------|
@@ -32,7 +32,8 @@ Eight commits sit on top of upstream `ros2`. Read in the same order they apply:
 | `c2127fc` | fix        | os_image_node: distortion_model `equidistant` → `plumb_bob`          |
 | `88afb09` | feat       | populate `CameraInfo.roi` from sensor `column_window`                |
 | `be2e02b` | feat       | os_pinhole node + PinholeProcessor: cardinal pinhole panels          |
-| _new_     | revert     | os_image_node: distortion_model back to `equidistant` for viz hint   |
+| `e8cbd10` | revert     | os_image_node: distortion_model back to `equidistant` for viz hint   |
+| _new_     | feat       | os_image_node: distortion_model `equidistant` → `equirectangular` (Trillium custom) |
 
 ### Pinhole panel publisher (newest commit)
 
@@ -108,7 +109,7 @@ upgrade.
 | `fy`                | **`H/(2π)`** — implicitly assumes 2π VFOV             | `H / vfov_rad`, where `vfov_rad` is derived from `beam_altitude_angles` |
 | `cy`                | `H/2`                                                 | `H/2 − mean_alt·fy` — corrects for asymmetric beam pattern           |
 | Degenerate fallback | None                                                  | If `beam_altitude_angles.size() < 2`, log WARN and fall back to upstream's 2π formula |
-| `distortion_model`  | `"equidistant"` with **5 D coefficients**             | `"plumb_bob"` with 5 zero D coefficients                             |
+| `distortion_model`  | `"equidistant"` with **5 D coefficients**             | `"equirectangular"` (Trillium-custom; 0 D coefficients)              |
 | Timestamp           | `ros::Time::now()` at startup                         | `image->header.stamp` per frame                                      |
 
 Notes on the more substantive deltas:
@@ -126,10 +127,16 @@ Notes on the more substantive deltas:
   ray points at horizon; computing it from the mean of min/max altitudes
   matches that geometry rather than just centering on the image.
 
-- **`plumb_bob` over `equidistant`.** See the dedicated subsection below —
-  the short version is that **neither** REP-104 distortion model is correct
-  for an equirectangular 360° image, and `plumb_bob` is the least-wrong
-  label for our K matrix.
+- **`equirectangular` over the REP-104 options.** See the dedicated
+  subsection below — the short version is that **no** REP-104
+  distortion model correctly describes a 360° equirectangular image, so
+  this fork emits a Trillium-custom label (`"equirectangular"`) that the
+  paired Trillium fork understands and renders as a curved
+  cylinder/sphere mesh in its 3D Scene panel. Stock RViz /
+  `image_pipeline` consumers will reject the unknown label — that is
+  expected; they are not the intended audience for the os_image
+  topic. Pinhole-camera consumers should subscribe to `os_pinhole`
+  panels instead, which carry standard `plumb_bob` `CameraInfo`.
 
 - **Per-frame vs. latched.** The one dimension where upstream's choice has
   any merit: a late-joining subscriber gets one CameraInfo immediately on a
@@ -141,24 +148,36 @@ Notes on the more substantive deltas:
   `transient_local` durability to the `camera_info` publisher *only* — keep
   the image publishers on `sensor_data`.
 
-### Distortion model: history (`equidistant` → `plumb_bob` → `equidistant`)
+### Distortion model: history (`equidistant` → `plumb_bob` → `equidistant` → `equirectangular`)
 
-> **Current state:** the model is back to `"equidistant"` (latest commit).
-> The analysis below documents *why* `c2127fc` flipped to `plumb_bob` —
-> it's still accurate about the image_pipeline rectify dispatch table —
-> but the latest revert prioritizes a different downstream: Foxglove /
-> Trillium 3D rendering. The 2D image panel doesn't care; in 3D, the
-> `equidistant` label is the closest standard hint we can give that this
-> is a wide-FOV / curved camera rather than a flat plumb_bob plane.
-> `lidar_image_panels` was the load-bearing consumer that drove
-> `c2127fc`; it is currently **off** in this workspace
-> (`run_lidar_image_panels=False`), and the new `os_pinhole` node taps
-> `lidar_packets` directly with its own LUT — neither cares which model
-> name the os_image CameraInfo carries.
+> **Current state:** the model is `"equirectangular"` — a Trillium-custom
+> label, not part of any standard ROS distortion_model spec. The paired
+> Trillium fork (`packages/den/image/PinholeCameraModel.ts`) recognizes
+> it and projects pixels via `(u, v) → (azimuth, elevation)` on a unit
+> sphere, then `ImageRenderable` builds a 128×32-segment curved mesh so
+> the 360° panorama wraps as a cylinder/sphere in the 3D Scene panel
+> rather than rendering as a flat plane.
 >
-> If `lidar_image_panels` is re-enabled, either revert to `plumb_bob`
-> for that consumer or move the model name behind a node parameter
-> (~5 LoC) so the two consumers can pick differently.
+> **Why a custom label rather than re-using `equidistant`.** `equidistant`
+> dispatches `cv::fisheye::initUndistortRectifyMap` in `image_pipeline`,
+> which expects a fisheye-Kannala K matrix — fundamentally different
+> from our equirectangular K. Trillium's stock `equidistant` path
+> assumes that same fisheye math, so trying to fake an equirect image
+> as `equidistant` produced "Unrecognized distortion model" errors and
+> mis-shaped geometry. A clean, named model with explicit support in
+> the renderer is the right answer.
+>
+> **Audience.** `os_image` exists for Trillium / Foxglove visualization,
+> not for `image_proc` or `image_geometry::PinholeCameraModel`
+> consumers. Stock ROS image tools will reject the unknown label —
+> that's fine: pinhole-camera consumers should subscribe to
+> `os_pinhole` panels (proper `plumb_bob`) instead.
+>
+> The historical analysis below (sections "why the *original* analysis
+> chose `plumb_bob`" and the per-label dispatch table) remains accurate
+> for context on what the label dispatches under each REP-104 option,
+> and is preserved as the reference for "what would happen if we ever
+> re-emitted a stock label."
 
 ### Distortion model: why the *original* analysis chose `plumb_bob`, not `equidistant`
 
@@ -222,13 +241,16 @@ the default for everyone.
 - `publish_camera_info` and `sensor_frame` are composed into the image-node
   parameter file at launch time; default frame name follows the
   `${prefix}_lidar` convention from the per-LiDAR namespace.
-- The current `equidistant` label is a viewer-rendering hint for
-  Foxglove/Trillium and is **not** safe for `lidar_image_panels` (its
-  `cv::fisheye::initUndistortRectifyMap` path mis-rectifies an
-  equirect K matrix). `lidar_image_panels` is currently off
-  (`run_lidar_image_panels=False`); if you re-enable it, either flip
-  the model back to `plumb_bob` or expose `distortion_model` as a node
-  parameter so the two consumers can pick differently.
+- The current `equirectangular` label is a Trillium-custom hint for the
+  paired Trillium fork's curved-mesh renderer. Stock ROS tools
+  (`image_pipeline`, `image_geometry::PinholeCameraModel`,
+  `cv::fisheye::initUndistortRectifyMap`, etc.) will reject it. Anything
+  in this workspace that needs a real pinhole `CameraInfo` should
+  subscribe to `os_pinhole` topics instead — those carry standard
+  `plumb_bob` calibration. If you re-enable `lidar_image_panels` (which
+  expected `plumb_bob` from `os_image`), expose `distortion_model` as a
+  node parameter (~5 LoC) so the two consumers can pick differently
+  rather than reverting the default.
 - The corrected `fy` from `beam_altitude_angles` (commit `fde48f6`) is
   similarly load-bearing for `lidar_image_panels`'s panel auto-height
   calculation — reverting to the upstream `H/(2π)` formula would inflate
