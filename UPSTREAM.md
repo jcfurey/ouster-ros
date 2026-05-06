@@ -21,7 +21,7 @@ git rebase upstream/ros2                   # pick up new upstream work
 
 ## Local divergence
 
-Seven commits sit on top of upstream `ros2`. Read in the same order they apply:
+Eight commits sit on top of upstream `ros2`. Read in the same order they apply:
 
 | Commit    | Category   | Subject                                                              |
 |-----------|------------|----------------------------------------------------------------------|
@@ -31,7 +31,8 @@ Seven commits sit on top of upstream `ros2`. Read in the same order they apply:
 | `a28cfc4` | feat       | gate CameraInfo publication and let frame_id be configured           |
 | `c2127fc` | fix        | os_image_node: distortion_model `equidistant` → `plumb_bob`          |
 | `88afb09` | feat       | populate `CameraInfo.roi` from sensor `column_window`                |
-| _new_     | feat       | os_pinhole node + PinholeProcessor: cardinal pinhole panels          |
+| `be2e02b` | feat       | os_pinhole node + PinholeProcessor: cardinal pinhole panels          |
+| _new_     | revert     | os_image_node: distortion_model back to `equidistant` for viz hint   |
 
 ### Pinhole panel publisher (newest commit)
 
@@ -140,7 +141,26 @@ Notes on the more substantive deltas:
   `transient_local` durability to the `camera_info` publisher *only* — keep
   the image publishers on `sensor_data`.
 
-### Distortion model: why `plumb_bob`, not `equidistant`
+### Distortion model: history (`equidistant` → `plumb_bob` → `equidistant`)
+
+> **Current state:** the model is back to `"equidistant"` (latest commit).
+> The analysis below documents *why* `c2127fc` flipped to `plumb_bob` —
+> it's still accurate about the image_pipeline rectify dispatch table —
+> but the latest revert prioritizes a different downstream: Foxglove /
+> Trillium 3D rendering. The 2D image panel doesn't care; in 3D, the
+> `equidistant` label is the closest standard hint we can give that this
+> is a wide-FOV / curved camera rather than a flat plumb_bob plane.
+> `lidar_image_panels` was the load-bearing consumer that drove
+> `c2127fc`; it is currently **off** in this workspace
+> (`run_lidar_image_panels=False`), and the new `os_pinhole` node taps
+> `lidar_packets` directly with its own LUT — neither cares which model
+> name the os_image CameraInfo carries.
+>
+> If `lidar_image_panels` is re-enabled, either revert to `plumb_bob`
+> for that consumer or move the model name behind a node parameter
+> (~5 LoC) so the two consumers can pick differently.
+
+### Distortion model: why the *original* analysis chose `plumb_bob`, not `equidistant`
 
 The published K matrix encodes `fx = W/(2π)`, which makes column index a
 **linear function of azimuth** (`azimuth = (v − cx)/fx` rad). That is an
@@ -202,9 +222,13 @@ the default for everyone.
 - `publish_camera_info` and `sensor_frame` are composed into the image-node
   parameter file at launch time; default frame name follows the
   `${prefix}_lidar` convention from the per-LiDAR namespace.
-- The `plumb_bob` choice is load-bearing for the `lidar_image_panels`
-  package — do not revert to `equidistant` without revisiting that
-  consumer's rectification pipeline.
+- The current `equidistant` label is a viewer-rendering hint for
+  Foxglove/Trillium and is **not** safe for `lidar_image_panels` (its
+  `cv::fisheye::initUndistortRectifyMap` path mis-rectifies an
+  equirect K matrix). `lidar_image_panels` is currently off
+  (`run_lidar_image_panels=False`); if you re-enable it, either flip
+  the model back to `plumb_bob` or expose `distortion_model` as a node
+  parameter so the two consumers can pick differently.
 - The corrected `fy` from `beam_altitude_angles` (commit `fde48f6`) is
   similarly load-bearing for `lidar_image_panels`'s panel auto-height
   calculation — reverting to the upstream `H/(2π)` formula would inflate
