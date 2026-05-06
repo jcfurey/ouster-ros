@@ -21,7 +21,7 @@ git rebase upstream/ros2                   # pick up new upstream work
 
 ## Local divergence
 
-Six commits sit on top of upstream `ros2`. Read in the same order they apply:
+Seven commits sit on top of upstream `ros2`. Read in the same order they apply:
 
 | Commit    | Category   | Subject                                                              |
 |-----------|------------|----------------------------------------------------------------------|
@@ -31,6 +31,60 @@ Six commits sit on top of upstream `ros2`. Read in the same order they apply:
 | `a28cfc4` | feat       | gate CameraInfo publication and let frame_id be configured           |
 | `c2127fc` | fix        | os_image_node: distortion_model `equidistant` → `plumb_bob`          |
 | `88afb09` | feat       | populate `CameraInfo.roi` from sensor `column_window`                |
+| _new_     | feat       | os_pinhole node + PinholeProcessor: cardinal pinhole panels          |
+
+### Pinhole panel publisher (newest commit)
+
+`os_pinhole` is a new node co-located with `os_image` in this fork. It
+consumes the same `lidar_packets` + `metadata` stream and produces N
+pinhole rectified panels — by default front / left / rear / right at
+yaw 0 / 90 / 180 / 270° about `lidar_frame` +Z — with each panel carrying
+its own optical-convention `frame_id` (`{ns}/panels/{name}_optical_frame`)
+broadcast via `StaticTransformBroadcaster`. Each panel publishes
+`range_image`, `signal_image`, `reflec_image`, `nearir_image`, and a
+matching pinhole `CameraInfo`, so Foxglove/Trillium and standard
+`image_proc`-style consumers see proper pinhole cameras.
+
+Why a separate node (vs. cropping `os_image`):
+`os_image` produces the natural cylindrical/equirectangular panorama —
+the right thing for pixel-perfect, single-source-of-truth metadata. It
+is NOT a pinhole camera, so cropping it and lying about the intrinsics
+breaks geometric consumers. `os_pinhole` does the resample-with-correct-K
+in a self-contained component instead.
+
+Implementation: `PinholeProcessor` (header-only) builds a per-output-pixel
+LUT mapping `(panel_row, panel_col)` → `(source_row, source_destaggered_col)`
+once at metadata reception. Per-scan work is field decode + auto-exposure
+on the full panorama (so all panels share dynamic range) + LUT-sample into
+each panel's `Image` buffer. Beam altitudes drive nearest-neighbor row
+selection; columns map linearly from azimuth, with an
+`azimuth_offset_columns` knob for per-platform constant offsets.
+
+Configuration (see `src/settings/params/sensor/lidar/ouster/lidar0.yaml`):
+
+| Parameter                   | Default                                | Notes                                              |
+|-----------------------------|----------------------------------------|----------------------------------------------------|
+| `panel_names`               | `["front","left","rear","right"]`      | Source of truth for panel count                    |
+| `panel_yaws_deg`            | `[0,90,180,270]`                       | CCW about `lidar_frame` +Z                         |
+| `panel_pitches_deg`         | `[0.0]`                                | Per-panel array OR singleton; `+pitch` → up        |
+| `panel_hfovs_deg`           | `[90.0]`                               | Per-panel array OR singleton broadcast             |
+| `panel_widths`              | `[256]`                                | Per-panel array OR singleton broadcast             |
+| `panel_heights`             | `[0]`                                  | 0 → auto-fit lidar VFOV at square pixels           |
+| `panel_vfovs_deg`           | `[0.0]`                                | 0 + height>0 → derived from height/fy              |
+| `azimuth_offset_deg`        | `0.0`                                  | Az(deg) of destaggered col 0 in `lidar_frame`      |
+| `optical_frame_template`    | `"{ns}/panels/{name}_optical_frame"`   | `{ns}` = `lidar_namespace`, `{name}` = panel name  |
+| `parent_frame`              | `os_lidar`                             | Static-TF parent (typically `lidarN/lidar_frame`)  |
+| `lidar_namespace`           | `lidar0`                               | Substituted for `{ns}` in topic + frame templates  |
+
+Static TF rotation is composed in tf2 as `q = R_z(yaw) * R_y(-pitch) * R_b2o`,
+where `R_b2o` (rpy = `-π/2, 0, -π/2`) maps body axes (`+X` forward, `+Y`
+left, `+Z` up) to the standard ROS optical convention (`+Z` forward, `+X`
+right, `+Y` down). Pitch is applied in the post-b2o panel-body frame so a
+positive `pitch_rad` always points the panel up regardless of yaw.
+
+Gated per-sensor in `bringup_erdc/lidar/launch/types/ouster.launch.xml`
+by `run_pointcloud_to_pinhole`, which reads `${lidar_name_index}_run_pinhole`
+(default False). Default-off; flip the env var to enable per-LiDAR.
 
 ## CameraInfo divergence from upstream noetic PR
 
