@@ -1,4 +1,4 @@
-ARG ROS_DISTRO=rolling
+ARG ROS_DISTRO=jazzy
 ARG RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 
 FROM ros:${ROS_DISTRO}-ros-core AS build-env
@@ -57,8 +57,7 @@ ARG ROS_DISTRO
 SHELL ["/bin/bash", "-c"]
 
 RUN source /opt/ros/$ROS_DISTRO/setup.bash && colcon build \
-    --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_FLAGS="-Wno-deprecated-declarations"
+    --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 RUN source /opt/ros/$ROS_DISTRO/setup.bash && colcon test \
     --ctest-args tests ouster_ros --rerun-failed --output-on-failure
