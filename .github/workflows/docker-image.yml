@@ -18,7 +18,7 @@ jobs:
           - humble
           - jazzy
           - kilted
-          - rolling
+          - lyrical
         rmw_imp:
           - rmw_fastrtps_cpp
           - rmw_cyclonedds_cpp
