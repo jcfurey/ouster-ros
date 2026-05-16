@@ -1,4 +1,4 @@
-ARG ROS_DISTRO=rolling
+ARG ROS_DISTRO=jazzy
 ARG RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 
 FROM ros:${ROS_DISTRO}-ros-core AS build-env
