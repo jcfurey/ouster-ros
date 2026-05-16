@@ -85,6 +85,11 @@ class LidarPacketHandler {
 
         lidar_scans.resize(LIDAR_SCAN_COUNT);
         mutexes.resize(LIDAR_SCAN_COUNT);
+        // Per-slot scan-timestamp storage. Kept alongside lidar_scans so the
+        // existing per-slot mutex serialises writer/reader access — see #4 in
+        // the ROS 2 compatibility audit.
+        lidar_scan_slot_ts.assign(LIDAR_SCAN_COUNT, 0);
+        lidar_scan_slot_msg_ts.assign(LIDAR_SCAN_COUNT, rclcpp::Time(0, 0));
 
         for (size_t i = 0; i < lidar_scans.size(); ++i) {
             lidar_scans[i] = std::make_unique<ouster::sdk::core::LidarScan>(
@@ -203,11 +208,12 @@ class LidarPacketHandler {
             if (ring_buffer.empty()) return;
         }
 
-        std::unique_lock<std::mutex> lock(*mutexes[ring_buffer.read_head()]);
+        const auto slot = ring_buffer.read_head();
+        std::unique_lock<std::mutex> lock(*mutexes[slot]);
 
         for (auto h : lidar_scan_handlers) {
-            h(*lidar_scans[ring_buffer.read_head()], lidar_scan_estimated_ts,
-              lidar_scan_estimated_msg_ts);
+            h(*lidar_scans[slot], lidar_scan_slot_ts[slot],
+              lidar_scan_slot_msg_ts[slot]);
         }
 
         // when we hit percent amount of the ring_buffer capacity throttle
@@ -244,12 +250,19 @@ class LidarPacketHandler {
         return impl::ulround(extrapolated_value);
     }
 
-    // compute_scan_ts_0 for first scan
+    // compute_scan_ts_0 for first scan. Returns 0 (a sentinel) if the scan
+    // has no non-zero timestamp columns at all — Release builds previously
+    // hit UB on the asserts below; an all-zero scan is also caught by the
+    // valid-columns ratio check in the writer lambda.
     uint64_t compute_scan_ts_0(
         const ouster::sdk::core::LidarScan::Header<uint64_t>& ts_v) {
         auto idx = std::find_if(ts_v.data(), ts_v.data() + ts_v.size(),
                                 [](uint64_t h) { return h != 0; });
-        assert(idx != ts_v.data() + ts_v.size());  // should never happen
+        if (idx == ts_v.data() + ts_v.size()) {
+            RCLCPP_WARN(rclcpp::get_logger(getName()),
+                        "scan timestamp column is all zeros; skipping");
+            return 0;
+        }
         int curr_scan_first_nonzero_idx = idx - ts_v.data();
         uint64_t curr_scan_first_nonzero_value = *idx;
 
@@ -261,7 +274,9 @@ class LidarPacketHandler {
 
         last_scan_last_nonzero_idx =
             find_if_reverse(ts_v, [](uint64_t h) { return h != 0; });
-        assert(last_scan_last_nonzero_idx >= 0);  // should never happen
+        // Logically guaranteed to succeed since std::find_if above already
+        // located a non-zero element, but guard in Release.
+        if (last_scan_last_nonzero_idx < 0) return 0;
         last_scan_last_nonzero_value = ts_v(last_scan_last_nonzero_idx);
         compute_scan_ts = [this](const auto& ts_v) {
             return compute_scan_ts_n(ts_v);
@@ -270,12 +285,17 @@ class LidarPacketHandler {
         return scan_ns;
     }
 
-    // compute_scan_ts_n applied to all subsequent scans except first one
+    // compute_scan_ts_n applied to all subsequent scans except first one.
+    // Same sentinel-zero behaviour as compute_scan_ts_0.
     uint64_t compute_scan_ts_n(
         const ouster::sdk::core::LidarScan::Header<uint64_t>& ts_v) {
         auto idx = std::find_if(ts_v.data(), ts_v.data() + ts_v.size(),
                                 [](uint64_t h) { return h != 0; });
-        assert(idx != ts_v.data() + ts_v.size());  // should never happen
+        if (idx == ts_v.data() + ts_v.size()) {
+            RCLCPP_WARN(rclcpp::get_logger(getName()),
+                        "scan timestamp column is all zeros; skipping");
+            return 0;
+        }
         int curr_scan_first_nonzero_idx = idx - ts_v.data();
         uint64_t curr_scan_first_nonzero_value = *idx;
         uint64_t scan_ns = curr_scan_first_nonzero_idx == 0
@@ -287,7 +307,7 @@ class LidarPacketHandler {
                                               static_cast<int>(ts_v.size()));
         last_scan_last_nonzero_idx =
             find_if_reverse(ts_v, [](uint64_t h) { return h != 0; });
-        assert(last_scan_last_nonzero_idx >= 0);  // should never happen
+        if (last_scan_last_nonzero_idx < 0) return 0;
         last_scan_last_nonzero_value = ts_v(last_scan_last_nonzero_idx);
         return scan_ns;
     }
@@ -311,8 +331,9 @@ class LidarPacketHandler {
                                    const ouster::sdk::core::LidarPacket& lidar_packet,
                                    ouster::sdk::core::LidarScan& lidar_scan) {
         if (!(*scan_batcher)(lidar_packet, lidar_scan)) return false;
-        lidar_scan_estimated_ts = compute_scan_ts(lidar_scan.timestamp());
-        lidar_scan_estimated_msg_ts = rclcpp::Time(lidar_scan_estimated_ts);
+        const auto slot = ring_buffer.write_head();
+        lidar_scan_slot_ts[slot] = compute_scan_ts(lidar_scan.timestamp());
+        lidar_scan_slot_msg_ts[slot] = rclcpp::Time(lidar_scan_slot_ts[slot]);
 
         return true;
     }
@@ -324,9 +345,9 @@ class LidarPacketHandler {
         auto ts_v = lidar_scan.timestamp();
         for (int i = 0; i < ts_v.rows(); ++i)
             ts_v[i] = impl::ts_safe_offset_add(ts_v[i], ptp_utc_tai_offset_);
-        lidar_scan_estimated_ts = compute_scan_ts(ts_v);
-        lidar_scan_estimated_msg_ts =
-            rclcpp::Time(lidar_scan_estimated_ts);
+        const auto slot = ring_buffer.write_head();
+        lidar_scan_slot_ts[slot] = compute_scan_ts(ts_v);
+        lidar_scan_slot_msg_ts[slot] = rclcpp::Time(lidar_scan_slot_ts[slot]);
 
         return true;
     }
@@ -343,8 +364,9 @@ class LidarPacketHandler {
         }
 
         if (!(*scan_batcher)(lidar_packet, lidar_scan)) return false;
-        lidar_scan_estimated_ts = compute_scan_ts(lidar_scan.timestamp());
-        lidar_scan_estimated_msg_ts = lidar_handler_ros_time_frame_ts.value();
+        const auto slot = ring_buffer.write_head();
+        lidar_scan_slot_ts[slot] = compute_scan_ts(lidar_scan.timestamp());
+        lidar_scan_slot_msg_ts[slot] = lidar_handler_ros_time_frame_ts.value();
         // set time for next point cloud msg
         lidar_handler_ros_time_frame_ts = extrapolate_frame_ts(
             pf, lidar_packet.buf.data(), packet_receive_time);
@@ -366,9 +388,11 @@ class LidarPacketHandler {
     std::mutex ring_buffer_mutex;
     std::vector<std::unique_ptr<ouster::sdk::core::LidarScan>> lidar_scans;
     std::vector<std::unique_ptr<std::mutex>> mutexes;
-
-    uint64_t lidar_scan_estimated_ts;
-    rclcpp::Time lidar_scan_estimated_msg_ts;
+    // Per-slot scan timestamp, written by the lidar_handler_* methods inside
+    // the writer's per-slot mutex and read in process_scans() inside the same
+    // mutex for the slot at read_head().
+    std::vector<uint64_t> lidar_scan_slot_ts;
+    std::vector<rclcpp::Time> lidar_scan_slot_msg_ts;
 
     std::optional<rclcpp::Time> lidar_handler_ros_time_frame_ts;
 
