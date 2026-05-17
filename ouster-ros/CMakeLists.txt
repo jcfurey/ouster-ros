@@ -8,7 +8,6 @@ project(ouster_ros)
 
 # ==== Requirements ====
 find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_target_dependencies REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(class_loader REQUIRED)
@@ -22,9 +21,28 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common)
 find_package(pcl_conversions REQUIRED)
+find_package(tf2 REQUIRED)
 find_package(tf2_eigen REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(OpenCV REQUIRED)
+
+# Modern replacement for the deprecated/removed `ament_target_dependencies()`.
+# Prefers the package's `${pkg_TARGETS}` list (set by rosidl for msg/srv pkgs
+# and by recent ament_cmake versions for library pkgs); falls back to the
+# `pkg::pkg` imported target when only that is available.
+function(_ouster_link_ament_deps target visibility)
+  foreach(_pkg IN LISTS ARGN)
+    if(DEFINED ${_pkg}_TARGETS)
+      target_link_libraries(${target} ${visibility} ${${_pkg}_TARGETS})
+    elseif(TARGET ${_pkg}::${_pkg})
+      target_link_libraries(${target} ${visibility} ${_pkg}::${_pkg})
+    else()
+      message(FATAL_ERROR
+        "_ouster_link_ament_deps: cannot resolve dependency '${_pkg}' "
+        "(neither ${_pkg}_TARGETS nor target ${_pkg}::${_pkg} is defined)")
+    endif()
+  endforeach()
+endfunction()
 # Use OpenCV libs variable (OpenCV::OpenCV target may not resolve on all systems)
 if(NOT OpenCV_LIBS)
   set(OpenCV_LIBS ${OpenCV_LIBRARIES})
@@ -86,7 +104,7 @@ set(ouster_ros_library_deps
   tf2_eigen
 )
 
-ament_target_dependencies(ouster_ros_library
+_ouster_link_ament_deps(ouster_ros_library PUBLIC
   ${ouster_ros_library_deps}
 )
 
@@ -114,7 +132,7 @@ function(create_ros2_component
       "OUSTER_ROS_BUILDING_DLL"
   )
 
-  ament_target_dependencies(${component_lib_name}
+  _ouster_link_ament_deps(${component_lib_name} PUBLIC
     rclcpp
     class_loader
     rclcpp_components
@@ -206,7 +224,7 @@ if(BUILD_TESTING)
     test/point_transform_test.cpp
     test/point_cloud_compose_test.cpp
   )
-  ament_target_dependencies(${PROJECT_NAME}_test
+  _ouster_link_ament_deps(${PROJECT_NAME}_test PUBLIC
     rclcpp
     ouster_sensor_msgs
   )
