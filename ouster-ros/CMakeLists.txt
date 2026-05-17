@@ -88,7 +88,6 @@ endif()
 add_library(ouster_ros_library SHARED
   src/impl/file_util.cpp
   src/os_ros.cpp
-  src/lidar_scan_to_point_cloud.cpp
 )
 
 set(ouster_ros_library_deps
@@ -224,7 +223,6 @@ endif()
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(${PROJECT_NAME}_test
-    test/lidar_scan_to_point_cloud_test.cpp
     src/os_ros.cpp
     test/test_main.cpp
     test/lock_free_ring_buffer_test.cpp
