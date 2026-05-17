@@ -109,13 +109,13 @@ _ouster_link_ament_deps(ouster_ros_library PUBLIC
 )
 
 target_link_libraries(ouster_ros_library
-  # PUBLIC (unsupported)
+  PUBLIC
     ouster_build
     OusterSDK::ouster_sensor
     pcl_common
-  # PRIVATE (unsupported)
-  ${OUSTER_TARGET_LINKS}
-  ${OpenCV_LIBS}
+  PRIVATE
+    ${OUSTER_TARGET_LINKS}
+    ${OpenCV_LIBS}
 )
 
 # helper method to construct ouster-ros components
@@ -144,7 +144,8 @@ function(create_ros2_component
   )
 
   target_link_libraries(${component_lib_name}
-    ouster_ros_library
+    PUBLIC
+      ouster_ros_library
   )
 
 endfunction()
@@ -224,16 +225,22 @@ if(BUILD_TESTING)
     test/point_transform_test.cpp
     test/point_cloud_compose_test.cpp
   )
-  _ouster_link_ament_deps(${PROJECT_NAME}_test PUBLIC
-    rclcpp
-    ouster_sensor_msgs
-  )
-  target_include_directories(${PROJECT_NAME}_test PUBLIC
-    ${_ouster_ros_INCLUDE_DIRS}
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-  )
-  target_link_libraries(${PROJECT_NAME}_test ouster_ros_library)
+
+  if(TARGET ${PROJECT_NAME}_test)
+    _ouster_link_ament_deps(${PROJECT_NAME}_test PUBLIC
+      rclcpp
+      ouster_sensor_msgs
+    )
+    target_include_directories(${PROJECT_NAME}_test PUBLIC
+      ${_ouster_ros_INCLUDE_DIRS}
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:include>
+    )
+    target_link_libraries(${PROJECT_NAME}_test
+      PRIVATE
+        ouster_ros_library
+    )
+  endif()
 endif()
 
 
