@@ -27,19 +27,32 @@ find_package(tf2_ros REQUIRED)
 find_package(OpenCV REQUIRED)
 
 # Modern replacement for the deprecated/removed `ament_target_dependencies()`.
-# Prefers the package's `${pkg_TARGETS}` list (set by rosidl for msg/srv pkgs
-# and by recent ament_cmake versions for library pkgs); falls back to the
-# `pkg::pkg` imported target when only that is available.
+# Resolves each ament package against, in order of preference:
+#   1. `${pkg}_TARGETS` (set by rosidl for msg/srv pkgs and by recent
+#      ament_cmake versions for library pkgs — e.g. tf2 on Lyrical).
+#   2. The `pkg::pkg` imported target when only that is available.
+#   3. Legacy ament `${pkg}_INCLUDE_DIRS` / `${pkg}_LIBRARIES` variables
+#      (still the only thing exposed by header-only packages like
+#      `pcl_conversions` on Humble/Jazzy/Kilted).
 function(_ouster_link_ament_deps target visibility)
   foreach(_pkg IN LISTS ARGN)
     if(DEFINED ${_pkg}_TARGETS)
       target_link_libraries(${target} ${visibility} ${${_pkg}_TARGETS})
     elseif(TARGET ${_pkg}::${_pkg})
       target_link_libraries(${target} ${visibility} ${_pkg}::${_pkg})
+    elseif(DEFINED ${_pkg}_INCLUDE_DIRS OR DEFINED ${_pkg}_LIBRARIES)
+      if(${_pkg}_INCLUDE_DIRS)
+        target_include_directories(${target} SYSTEM ${visibility}
+          ${${_pkg}_INCLUDE_DIRS})
+      endif()
+      if(${_pkg}_LIBRARIES)
+        target_link_libraries(${target} ${visibility} ${${_pkg}_LIBRARIES})
+      endif()
     else()
       message(FATAL_ERROR
         "_ouster_link_ament_deps: cannot resolve dependency '${_pkg}' "
-        "(neither ${_pkg}_TARGETS nor target ${_pkg}::${_pkg} is defined)")
+        "(none of ${_pkg}_TARGETS, target ${_pkg}::${_pkg}, or legacy "
+        "${_pkg}_INCLUDE_DIRS/${_pkg}_LIBRARIES are defined)")
     endif()
   endforeach()
 endfunction()
