@@ -19,15 +19,16 @@
   <depend>geometry_msgs</depend>
   <depend>std_srvs</depend>
   <depend>tf2_ros</depend>
+  <depend>tf2_eigen</depend>
   <depend>pcl_conversions</depend>
-  <depend>cv_bridge</depend>
+  <depend>libopencv-dev</depend>
   <depend>curl</depend>
   <depend>spdlog</depend>
   <depend>libjsoncpp-dev</depend>
 
   <build_depend>eigen</build_depend>
-  <build_depend>tf2_eigen</build_depend>
   <build_depend>libpcl-all-dev</build_depend>
+  <build_depend>libssl-dev</build_depend>
   <build_depend>libtins-dev</build_depend>
   <build_depend>libzip-dev</build_depend>
 
