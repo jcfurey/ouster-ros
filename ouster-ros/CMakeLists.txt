@@ -26,26 +26,25 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(OpenCV REQUIRED)
 
-# Modern replacement for the deprecated/removed `ament_target_dependencies()`.
-# Resolves each ament package against, in order of preference:
-#   1. `${pkg}_TARGETS` (set by rosidl for msg/srv pkgs and by recent
-#      ament_cmake versions for library pkgs — e.g. tf2 on Lyrical).
-#   2. The `pkg::pkg` imported target when only that is available.
-#   3. Legacy ament `${pkg}_INCLUDE_DIRS` / `${pkg}_LIBRARIES` variables
-#      (still the only thing exposed by header-only packages like
-#      `pcl_conversions` on Humble/Jazzy/Kilted).
+# Link an ament package as a dependency. ament_cmake exposes packages in
+# three shapes across ROS 2 distros; we try each in turn:
+#   1. ${pkg}_TARGETS         - rosidl pkgs (msgs/srvs); library pkgs on
+#                               Lyrical+ (e.g. tf2).
+#   2. pkg::pkg imported tgt  - library pkgs on Humble/Jazzy/Kilted.
+#   3. ${pkg}_INCLUDE_DIRS /
+#      ${pkg}_LIBRARIES       - legacy header-only pkgs (pcl_conversions
+#                               on Humble/Jazzy/Kilted).
 #
-# `visibility` is one of PUBLIC / PRIVATE / INTERFACE, or the special value
-# PLAIN. PLAIN omits the keyword on `target_link_libraries` calls — required
-# when the target was first linked with the plain signature (notably
-# `ament_add_gtest` on Humble/Jazzy/Kilted, where the generated executable
-# is wired with `target_link_libraries(<exe> <libs>)` and CMake then
-# rejects any keyword call against the same target).
+# visibility is PUBLIC / PRIVATE / INTERFACE, or PLAIN. PLAIN drops the
+# keyword on target_link_libraries calls and is required when the target
+# was first linked plain - CMake forbids mixing the two modes on one
+# target. ament_add_gtest's executable uses the plain form on
+# Humble/Jazzy/Kilted, so the test target needs PLAIN there.
 function(_ouster_link_ament_deps target visibility)
   if(visibility STREQUAL "PLAIN")
     set(_link_vis "")
-    # target_include_directories has no plain signature. PRIVATE is correct
-    # for the only target type we use PLAIN with today (test executables).
+    # target_include_directories has no plain form; PRIVATE is fine for
+    # the executable targets we link with PLAIN.
     set(_include_vis PRIVATE)
   else()
     set(_link_vis ${visibility})
@@ -73,21 +72,17 @@ function(_ouster_link_ament_deps target visibility)
   endforeach()
 endfunction()
 
-# `ament_add_gtest_executable.cmake` ships in two flavors across ROS 2:
-#   - Humble/Jazzy/Kilted: plain `target_link_libraries(<exe> <libs>)`
-#   - Lyrical:             keyword `target_link_libraries(<exe> PRIVATE <libs>)`
-# Mixing the two on the same target is a hard CMake error, so we detect
-# which form ament uses and match it for our follow-up link calls on the
-# test executable. The detection only runs when BUILD_TESTING is on.
+# ament_add_gtest_executable.cmake uses plain target_link_libraries on
+# Humble/Jazzy/Kilted and keyword on Lyrical. Inspect the installed module
+# so our follow-up link calls on the test target match - CMake errors if
+# a single target sees both modes.
 function(_ouster_detect_gtest_link_mode out_var)
-  set(${out_var} "PRIVATE" PARENT_SCOPE)  # safe default: keyword
+  set(${out_var} "PRIVATE" PARENT_SCOPE)
   set(_gtest_module "${ament_cmake_gtest_DIR}/ament_add_gtest_executable.cmake")
   if(NOT EXISTS "${_gtest_module}")
     return()
   endif()
   file(READ "${_gtest_module}" _gtest_module_contents)
-  # Look for target_link_libraries(...) calls without a PUBLIC/PRIVATE/
-  # INTERFACE keyword in the first argument-position after the target.
   string(REGEX MATCHALL
     "target_link_libraries[ \t\n]*\\([^)]*\\)"
     _tll_calls "${_gtest_module_contents}")
@@ -306,8 +301,6 @@ if(BUILD_TESTING)
   )
 
   if(TARGET ${PROJECT_NAME}_test)
-    # Match the keyword/plain mode that ament_add_gtest used for this
-    # target — see _ouster_detect_gtest_link_mode above.
     _ouster_detect_gtest_link_mode(_test_link_mode)
     _ouster_link_ament_deps(${PROJECT_NAME}_test ${_test_link_mode}
       rclcpp
