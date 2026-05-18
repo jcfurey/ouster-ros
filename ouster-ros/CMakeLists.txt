@@ -26,20 +26,70 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(OpenCV REQUIRED)
 
-# Modern replacement for the deprecated/removed `ament_target_dependencies()`.
-# Prefers the package's `${pkg_TARGETS}` list (set by rosidl for msg/srv pkgs
-# and by recent ament_cmake versions for library pkgs); falls back to the
-# `pkg::pkg` imported target when only that is available.
+# Link an ament package as a dependency. ament_cmake exposes packages in
+# three shapes across ROS 2 distros; we try each in turn:
+#   1. ${pkg}_TARGETS         - rosidl pkgs (msgs/srvs); library pkgs on
+#                               Lyrical+ (e.g. tf2).
+#   2. pkg::pkg imported tgt  - library pkgs on Humble/Jazzy/Kilted.
+#   3. ${pkg}_INCLUDE_DIRS /
+#      ${pkg}_LIBRARIES       - legacy header-only pkgs (pcl_conversions
+#                               on Humble/Jazzy/Kilted).
+#
+# visibility is PUBLIC / PRIVATE / INTERFACE, or PLAIN. PLAIN drops the
+# keyword on target_link_libraries calls and is required when the target
+# was first linked plain - CMake forbids mixing the two modes on one
+# target. ament_add_gtest's executable uses the plain form on
+# Humble/Jazzy/Kilted, so the test target needs PLAIN there.
 function(_ouster_link_ament_deps target visibility)
+  if(visibility STREQUAL "PLAIN")
+    set(_link_vis "")
+    # target_include_directories has no plain form; PRIVATE is fine for
+    # the executable targets we link with PLAIN.
+    set(_include_vis PRIVATE)
+  else()
+    set(_link_vis ${visibility})
+    set(_include_vis ${visibility})
+  endif()
   foreach(_pkg IN LISTS ARGN)
     if(DEFINED ${_pkg}_TARGETS)
-      target_link_libraries(${target} ${visibility} ${${_pkg}_TARGETS})
+      target_link_libraries(${target} ${_link_vis} ${${_pkg}_TARGETS})
     elseif(TARGET ${_pkg}::${_pkg})
-      target_link_libraries(${target} ${visibility} ${_pkg}::${_pkg})
+      target_link_libraries(${target} ${_link_vis} ${_pkg}::${_pkg})
+    elseif(DEFINED ${_pkg}_INCLUDE_DIRS OR DEFINED ${_pkg}_LIBRARIES)
+      if(${_pkg}_INCLUDE_DIRS)
+        target_include_directories(${target} SYSTEM ${_include_vis}
+          ${${_pkg}_INCLUDE_DIRS})
+      endif()
+      if(${_pkg}_LIBRARIES)
+        target_link_libraries(${target} ${_link_vis} ${${_pkg}_LIBRARIES})
+      endif()
     else()
       message(FATAL_ERROR
         "_ouster_link_ament_deps: cannot resolve dependency '${_pkg}' "
-        "(neither ${_pkg}_TARGETS nor target ${_pkg}::${_pkg} is defined)")
+        "(none of ${_pkg}_TARGETS, target ${_pkg}::${_pkg}, or legacy "
+        "${_pkg}_INCLUDE_DIRS/${_pkg}_LIBRARIES are defined)")
+    endif()
+  endforeach()
+endfunction()
+
+# ament_add_gtest_executable.cmake uses plain target_link_libraries on
+# Humble/Jazzy/Kilted and keyword on Lyrical. Inspect the installed module
+# so our follow-up link calls on the test target match - CMake errors if
+# a single target sees both modes.
+function(_ouster_detect_gtest_link_mode out_var)
+  set(${out_var} "PRIVATE" PARENT_SCOPE)
+  set(_gtest_module "${ament_cmake_gtest_DIR}/ament_add_gtest_executable.cmake")
+  if(NOT EXISTS "${_gtest_module}")
+    return()
+  endif()
+  file(READ "${_gtest_module}" _gtest_module_contents)
+  string(REGEX MATCHALL
+    "target_link_libraries[ \t\n]*\\([^)]*\\)"
+    _tll_calls "${_gtest_module_contents}")
+  foreach(_call IN LISTS _tll_calls)
+    if(NOT _call MATCHES "target_link_libraries[ \t\n]*\\([^)]*(PUBLIC|PRIVATE|INTERFACE)")
+      set(${out_var} "PLAIN" PARENT_SCOPE)
+      return()
     endif()
   endforeach()
 endfunction()
@@ -251,19 +301,21 @@ if(BUILD_TESTING)
   )
 
   if(TARGET ${PROJECT_NAME}_test)
-    _ouster_link_ament_deps(${PROJECT_NAME}_test PUBLIC
+    _ouster_detect_gtest_link_mode(_test_link_mode)
+    _ouster_link_ament_deps(${PROJECT_NAME}_test ${_test_link_mode}
       rclcpp
       ouster_sensor_msgs
     )
-    target_include_directories(${PROJECT_NAME}_test PUBLIC
+    target_include_directories(${PROJECT_NAME}_test PRIVATE
       ${_ouster_ros_INCLUDE_DIRS}
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
       $<INSTALL_INTERFACE:include>
     )
-    target_link_libraries(${PROJECT_NAME}_test
-      PRIVATE
-        ouster_ros_library
-    )
+    if(_test_link_mode STREQUAL "PLAIN")
+      target_link_libraries(${PROJECT_NAME}_test ouster_ros_library)
+    else()
+      target_link_libraries(${PROJECT_NAME}_test ${_test_link_mode} ouster_ros_library)
+    endif()
   endif()
 endif()
 
