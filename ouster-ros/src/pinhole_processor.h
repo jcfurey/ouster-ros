@@ -1,7 +1,4 @@
 /**
- * Copyright (c) 2026, ERDC Robotics
- * All rights reserved.
- *
  * @file pinhole_processor.h
  * @brief Resamples the destaggered Ouster panorama into N pinhole panels at
  *        configurable cardinal yaws (front/left/rear/right). Each panel is a

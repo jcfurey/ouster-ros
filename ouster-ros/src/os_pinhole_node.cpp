@@ -1,7 +1,4 @@
 /**
- * Copyright (c) 2026, ERDC Robotics
- * All rights reserved.
- *
  * @file os_pinhole_node.cpp
  * @brief Publishes N pinhole rectified panels (range/signal/reflec/nearir +
  *        CameraInfo) re-sampled from the destaggered Ouster panorama. Each
@@ -95,8 +92,7 @@ class OusterPinhole : public OusterProcessingNodeBase {
         // Constant azimuth offset (degrees) of the destaggered image's
         // column 0 relative to lidar_frame +X. If column 0 actually
         // contains content from azimuth=φ in lidar_frame, set this to φ
-        // (positive = CCW). Per-platform empirical tune. Default 0
-        // (column 0 = lidar +X), but the rovermax mounting needs ~+90.
+        // (positive = CCW). Per-platform empirical tune.
         declare_parameter("azimuth_offset_deg", 0.0);
 
         static_tf_broadcaster_ =
