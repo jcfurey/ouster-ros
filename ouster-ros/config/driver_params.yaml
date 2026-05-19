@@ -173,8 +173,13 @@ ouster/os_driver:
     # min_scan_valid_columns_ratio[optional]: The minimum ratio of valid columns for
     # processing the LidarScan [0, 1]. default is 0%
     min_scan_valid_columns_ratio: 0.0
-    # mask_path[optional]: path to an image file that will be used to mask parts of the
-    # pointcloud.
+    # mask_path[optional]: path to a single-channel image file used to mask the
+    # range image. Authored in the destaggered (human-readable) layout — the
+    # same orientation as the published /image/* topics; the driver re-staggers
+    # it internally before applying to the raw scan. Image size should match
+    # (pixels_per_column / v_reduction) x columns_per_frame; mismatched sizes
+    # are resized with nearest-neighbour. Non-zero pixels are kept, zero pixels
+    # are dropped.
     mask_path: ''
     # nmea_in_polarity[optional]: polarity for NMEA UART input; possible values:
     # - ACTIVE_HIGH
