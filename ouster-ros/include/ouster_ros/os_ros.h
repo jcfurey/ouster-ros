@@ -172,6 +172,11 @@ const std::vector<int>& pixel_shift_by_row)
 {
     const int h = mask_destaggered.rows();
     const int w = mask_destaggered.cols();
+    // pixel_shift_by_row has one entry per native lidar row; when the mask
+    // is vertically subsampled (v_reduction > 1) its row u corresponds to
+    // native row u * rows_step.
+    const int rows_step =
+        h > 0 ? static_cast<int>(pixel_shift_by_row.size()) / h : 1;
 
     ouster::sdk::core::img_t<pixel_type> mask_staggered(h, w);
 
@@ -179,7 +184,7 @@ const std::vector<int>& pixel_shift_by_row)
         for (int v = 0; v < w; ++v) {
 
             int v_shift =
-                (v + w - pixel_shift_by_row[u]) % w;
+                (v + w - pixel_shift_by_row[u * rows_step]) % w;
 
             mask_staggered(u, v_shift) =
                 mask_destaggered(u, v);
