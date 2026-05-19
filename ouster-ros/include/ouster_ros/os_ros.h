@@ -190,7 +190,7 @@ const std::vector<int>& pixel_shift_by_row)
 
 template <typename pixel_type>
 ouster::sdk::core::img_t<pixel_type> load_mask(const std::string& mask_path,
-                                    size_t height, size_t width {
+                                    size_t height, size_t width) {
     if (mask_path.empty()) return ouster::sdk::core::img_t<pixel_type>();
 
     cv::Mat image = cv::imread(mask_path, cv::IMREAD_GRAYSCALE);
