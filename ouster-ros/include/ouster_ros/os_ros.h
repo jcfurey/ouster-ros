@@ -188,33 +188,14 @@ const std::vector<int>& pixel_shift_by_row)
     return mask_staggered;
 }
 
-template <typename pixel_type>
-ouster::sdk::core::img_t<pixel_type> load_mask(const std::string& mask_path,
-                                    size_t height, size_t width) {
-    if (mask_path.empty()) return ouster::sdk::core::img_t<pixel_type>();
-
-    cv::Mat image = cv::imread(mask_path, cv::IMREAD_GRAYSCALE);
-    if (image.empty()) {
-        throw std::runtime_error("Failed to load mask image from path: " + mask_path);
-    }
-
-    if (image.rows != static_cast<int>(height) || image.cols != static_cast<int>(width)) {
-        warn_mask_resized(image.cols, image.rows, static_cast<int>(height), static_cast<int>(width));
-        cv::Mat resized;
-        cv::resize(image, resized, cv::Size(width, height), 0, 0, cv::INTER_NEAREST);
-        image = resized;
-    }
-    Eigen::MatrixXi eigen_img(image.rows, image.cols);
-    cv::cv2eigen(image, eigen_img);
-    Eigen::MatrixXi zero_image = Eigen::MatrixXi::Zero(eigen_img.rows(), eigen_img.cols());
-    Eigen::MatrixXi ones_image = Eigen::MatrixXi::Ones(eigen_img.rows(), eigen_img.cols());
-    return(eigen_img.array() == 0.0).select(zero_image, ones_image).cast<pixel_type>();
-}
-
+// PR #546 originally added this as a second `load_mask` overload taking the
+// shift vector; merged into the existing 3-arg form via a default-empty
+// pixel_shift_by_row. Empty → image path (no staggering); populated → cloud
+// path (re-stagger before applying to the raw scan).
 template <typename pixel_type>
 ouster::sdk::core::img_t<pixel_type> load_mask(const std::string& mask_path,
                                     size_t height, size_t width,
-                                    const std::vector<int>& pixel_shift_by_row) {
+                                    const std::vector<int>& pixel_shift_by_row = {}) {
     if (mask_path.empty()) return ouster::sdk::core::img_t<pixel_type>();
 
     cv::Mat image = cv::imread(mask_path, cv::IMREAD_GRAYSCALE);
@@ -232,8 +213,8 @@ ouster::sdk::core::img_t<pixel_type> load_mask(const std::string& mask_path,
     cv::cv2eigen(image, eigen_img);
     Eigen::MatrixXi zero_image = Eigen::MatrixXi::Zero(eigen_img.rows(), eigen_img.cols());
     Eigen::MatrixXi ones_image = Eigen::MatrixXi::Ones(eigen_img.rows(), eigen_img.cols());
-    ouster::sdk::core::img_t<pixel_type> mask_destaggered = (eigen_img.array() == 0.0).select(zero_image, ones_image).cast<pixel_type>();
-    return stagger_mask(mask_destaggered, pixel_shift_by_row);
+    ouster::sdk::core::img_t<pixel_type> mask = (eigen_img.array() == 0.0).select(zero_image, ones_image).cast<pixel_type>();
+    return pixel_shift_by_row.empty() ? mask : stagger_mask(mask, pixel_shift_by_row);
 }
 
 } // namespace impl
