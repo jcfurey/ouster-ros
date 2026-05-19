@@ -50,6 +50,10 @@ class OusterImage : public OusterProcessingNodeBase {
         declare_parameter("mask_path", "");
         declare_parameter("distortion_model", "plumb_bob");
         declare_parameter("sensor_frame", "os_lidar");
+        // Preferred image frame_id. Empty falls back to `sensor_frame` —
+        // which is a misnomer here (defaults to "os_lidar", the beam-origin
+        // frame, not the os_sensor mount). New callers should set this.
+        declare_parameter("optical_frame", "");
         declare_parameter("publish_camera_info", true);
         create_metadata_subscriber(
             [this](const auto& msg) { metadata_handler(msg); });
@@ -115,15 +119,18 @@ class OusterImage : public OusterProcessingNodeBase {
 
         auto mask_path = get_parameter("mask_path").as_string();
         auto sensor_frame = get_parameter("sensor_frame").as_string();
+        auto optical_frame = get_parameter("optical_frame").as_string();
+        const auto& image_frame_id =
+            optical_frame.empty() ? sensor_frame : optical_frame;
         publish_camera_info_ = get_parameter("publish_camera_info").as_bool();
 
         if (publish_camera_info_) {
-            create_camera_info_publisher(info, sensor_frame, selected_qos);
+            create_camera_info_publisher(info, image_frame_id, selected_qos);
         }
 
         std::vector<LidarScanProcessor> processors {
             ImageProcessor::create(
-                info, sensor_frame,
+                info, image_frame_id,
                 mask_path,
                 [this](ImageProcessor::OutputType msgs) {
                     for (auto it = msgs.begin(); it != msgs.end(); ++it) {
