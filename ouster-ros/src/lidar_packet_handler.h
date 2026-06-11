@@ -231,66 +231,22 @@ class LidarPacketHandler {
         const auto slot = ring_buffer.read_head();
         std::unique_lock<std::mutex> lock(*mutexes[slot]);
 
-        // apply auto exposure to the rgb data only if the point cloud has rgb fields
-        static ouster::sdk::core::image::AutoExposure auto_exposure;
-        // NOTE[UN]: Copy the lidar scan to avoid modifying the original scan in the ring buffer
-        ouster::sdk::core::LidarScan ls = *lidar_scans[ring_buffer.read_head()];
-
-        if (ls.has_field(ChanField::R) && ls.has_field(ChanField::G) && ls.has_field(ChanField::B)) {
-
-            Eigen::Ref<ouster::sdk::core::img_t<uint16_t>> r_data = ls.field<uint16_t>(ChanField::R);
-            Eigen::Ref<ouster::sdk::core::img_t<uint16_t>> g_data = ls.field<uint16_t>(ChanField::G);
-            Eigen::Ref<ouster::sdk::core::img_t<uint16_t>> b_data = ls.field<uint16_t>(ChanField::B);
-
-            ouster::sdk::core::img_t<float> r_data_float(r_data.rows(), r_data.cols());
-            ouster::sdk::core::img_t<float> g_data_float(g_data.rows(), g_data.cols());
-            ouster::sdk::core::img_t<float> b_data_float(b_data.rows(), b_data.cols());
-
-            // Get raw pointers for speed
-            const uint16_t* r_in = r_data.data();
-            const uint16_t* g_in = g_data.data();
-            const uint16_t* b_in = b_data.data();
-
-            float* r_out = r_data_float.data();
-            float* g_out = g_data_float.data();
-            float* b_out = b_data_float.data();
-
-            for (int i = 0; i < r_data.size(); ++i) {
-                r_out[i] = f16_bits_to_f32(r_in[i]);
-                g_out[i] = f16_bits_to_f32(g_in[i]);
-                b_out[i] = f16_bits_to_f32(b_in[i]);
-            }
-
-            auto_exposure.update(r_data_float, g_data_float, b_data_float, true);
-
-            ouster::sdk::core::img_t<uint8_t> r_data_uint8(r_data.rows(), r_data.cols());
-            ouster::sdk::core::img_t<uint8_t> g_data_uint8(g_data.rows(), g_data.cols());
-            ouster::sdk::core::img_t<uint8_t> b_data_uint8(b_data.rows(), b_data.cols());
-
-            uint8_t* r_out_uint8 = r_data_uint8.data();
-            uint8_t* g_out_uint8 = g_data_uint8.data();
-            uint8_t* b_out_uint8 = b_data_uint8.data();
-
-            for (int i = 0; i < r_data.size(); ++i) {
-                r_out_uint8[i] = f32_to_u8(r_out[i]);
-                g_out_uint8[i] = f32_to_u8(g_out[i]);
-                b_out_uint8[i] = f32_to_u8(b_out[i]);
-            }
-
-            ls.del_field(ChanField::R);
-            ls.add_field(ChanField::R, ouster::sdk::core::fd_array<uint8_t>(r_data.rows(), r_data.cols()));
-            ls.del_field(ChanField::G);
-            ls.add_field(ChanField::G, ouster::sdk::core::fd_array<uint8_t>(g_data.rows(), g_data.cols()));
-            ls.del_field(ChanField::B);
-            ls.add_field(ChanField::B, ouster::sdk::core::fd_array<uint8_t>(b_data.rows(), b_data.cols()));
-            ls.field<uint8_t>(ChanField::R) = r_data_uint8;
-            ls.field<uint8_t>(ChanField::G) = g_data_uint8;
-            ls.field<uint8_t>(ChanField::B) = b_data_uint8;
-        }
-
-        for (auto h : lidar_scan_handlers) {
-            h(*lidar_scans[slot], lidar_scan_slot_ts[slot],
-              lidar_scan_slot_msg_ts[slot]);
+        auto& slot_scan = *lidar_scans[slot];
+        // The RGB lidar profile delivers R/G/B as raw float16 bits stored in
+        // uint16 fields; downstream processors (image_processor, the xyzrgb
+        // point clouds) read these channels as auto-exposed uint8. Convert on
+        // a copy so the ring-buffer slot keeps its uint16 field layout for
+        // the scan batcher to reuse; non-RGB profiles skip the copy entirely.
+        if (slot_scan.has_field(ChanField::R) &&
+            slot_scan.has_field(ChanField::G) &&
+            slot_scan.has_field(ChanField::B) &&
+            slot_scan.field_type(ChanField::R).element_type ==
+                ouster::sdk::core::ChanFieldType::UINT16) {
+            ouster::sdk::core::LidarScan ls = slot_scan;
+            convert_rgb_f16_to_autoexposed_u8(ls);
+            dispatch_scan(ls, slot);
+        } else {
+            dispatch_scan(slot_scan, slot);
         }
 
         // when we hit percent amount of the ring_buffer capacity throttle
@@ -302,6 +258,58 @@ class LidarPacketHandler {
             read_step = 2;
         }
         ring_buffer.read(read_step);
+    }
+
+    void dispatch_scan(const ouster::sdk::core::LidarScan& ls, size_t slot) {
+        for (const auto& handler : lidar_scan_handlers) {
+            handler(ls, lidar_scan_slot_ts[slot], lidar_scan_slot_msg_ts[slot]);
+        }
+    }
+
+    // Replaces the scan's uint16 R/G/B fields (raw float16 bits) with
+    // auto-exposed uint8 fields of the same dimensions.
+    void convert_rgb_f16_to_autoexposed_u8(ouster::sdk::core::LidarScan& ls) {
+        const Eigen::Index rows = ls.field<uint16_t>(ChanField::R).rows();
+        const Eigen::Index cols = ls.field<uint16_t>(ChanField::R).cols();
+        const Eigen::Index size = rows * cols;
+
+        ouster::sdk::core::img_t<float> r_float(rows, cols);
+        ouster::sdk::core::img_t<float> g_float(rows, cols);
+        ouster::sdk::core::img_t<float> b_float(rows, cols);
+
+        {
+            const uint16_t* r_in = ls.field<uint16_t>(ChanField::R).data();
+            const uint16_t* g_in = ls.field<uint16_t>(ChanField::G).data();
+            const uint16_t* b_in = ls.field<uint16_t>(ChanField::B).data();
+            float* r_out = r_float.data();
+            float* g_out = g_float.data();
+            float* b_out = b_float.data();
+            for (Eigen::Index i = 0; i < size; ++i) {
+                r_out[i] = f16_bits_to_f32(r_in[i]);
+                g_out[i] = f16_bits_to_f32(g_in[i]);
+                b_out[i] = f16_bits_to_f32(b_in[i]);
+            }
+        }
+
+        rgb_auto_exposure_.update(r_float, g_float, b_float, true);
+
+        for (const auto& channel : {ChanField::R, ChanField::G, ChanField::B}) {
+            ls.del_field(channel);
+            ls.add_field(channel,
+                         ouster::sdk::core::fd_array<uint8_t>(rows, cols));
+        }
+
+        uint8_t* r_u8 = ls.field<uint8_t>(ChanField::R).data();
+        uint8_t* g_u8 = ls.field<uint8_t>(ChanField::G).data();
+        uint8_t* b_u8 = ls.field<uint8_t>(ChanField::B).data();
+        const float* r_out = r_float.data();
+        const float* g_out = g_float.data();
+        const float* b_out = b_float.data();
+        for (Eigen::Index i = 0; i < size; ++i) {
+            r_u8[i] = f32_to_u8(r_out[i]);
+            g_u8[i] = f32_to_u8(g_out[i]);
+            b_u8[i] = f32_to_u8(b_out[i]);
+        }
     }
 
     // time interpolation methods
@@ -489,6 +497,9 @@ class LidarPacketHandler {
     std::atomic<bool> lidar_scans_processing_active = true;
     std::unique_ptr<std::thread> lidar_scans_processing_thread;
     std::condition_variable ring_buffer_has_elements;
+
+    // auto exposure for the RGB profile, only used on the processing thread
+    ouster::sdk::core::image::AutoExposure rgb_auto_exposure_;
 
     int64_t ptp_utc_tai_offset_;
 
