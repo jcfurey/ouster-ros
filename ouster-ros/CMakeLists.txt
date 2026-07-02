@@ -7,23 +7,19 @@ include(DefaultBuildType)
 project(ouster_ros)
 
 # ==== Requirements ====
-find_package(ament_cmake REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(rclcpp_components REQUIRED)
-find_package(class_loader REQUIRED)
-find_package(rclcpp_lifecycle REQUIRED)
-find_package(std_msgs REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(geometry_msgs REQUIRED)
-find_package(ouster_sensor_msgs REQUIRED)
-find_package(std_srvs REQUIRED)
-find_package(rosidl_default_generators REQUIRED)
+# ROS deps are pulled from package.xml via ament_cmake_auto. ament_target_dependencies
+# was removed in Rolling/Lyrical, so ament_auto_add_library (which links the package.xml
+# deps onto the target directly) replaces the old add_library + ament_target_dependencies
+# pattern. Non-ROS deps are still found explicitly below.
+find_package(ament_cmake_auto REQUIRED)
+# VTK::jsoncpp (pulled in transitively via PCL/pcl_conversions) lists JsonCpp::JsonCpp
+# in its link interface but VTK doesn't find_package(jsoncpp) itself — define the
+# imported target first so VTK-targets.cmake resolves during dep discovery.
+find_package(jsoncpp REQUIRED)
+ament_auto_find_build_dependencies()
+
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common)
-find_package(pcl_conversions REQUIRED)
-find_package(tf2_eigen REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
 # Use OpenCV libs variable (OpenCV::OpenCV target may not resolve on all systems)
 if(NOT OpenCV_LIBS)
@@ -71,31 +67,17 @@ if (BUILD_PCAP)
   list(APPEND OUSTER_TARGET_LINKS ouster_pcap)
 endif()
 
-add_library(ouster_ros_library SHARED
+ament_auto_add_library(ouster_ros_library SHARED
   src/impl/file_util.cpp
   src/os_ros.cpp
 )
 
-set(ouster_ros_library_deps
-  rclcpp
-  sensor_msgs
-  geometry_msgs
-  ouster_sensor_msgs
-  pcl_conversions
-  tf2
-  tf2_eigen
-)
-
-ament_target_dependencies(ouster_ros_library
-  ${ouster_ros_library_deps}
-)
-
+# Plain signature (no PUBLIC/PRIVATE): matches ament_auto_add_library's internal
+# linking; CMake forbids mixing keyword and plain target_link_libraries styles.
 target_link_libraries(ouster_ros_library
-  # PUBLIC (unsupported)
     ouster_build
     OusterSDK::ouster_sensor
     pcl_common
-  # PRIVATE (unsupported)
   ${OUSTER_TARGET_LINKS}
   ${OpenCV_LIBS}
 )
@@ -104,25 +86,14 @@ target_link_libraries(ouster_ros_library
 function(create_ros2_component
   component_lib_name
   src_list
-  additional_dependencies
+  additional_dependencies  # unused: ROS deps now come from package.xml via ament_auto
 )
 
-  add_library(${component_lib_name} SHARED
+  ament_auto_add_library(${component_lib_name} SHARED
     ${src_list})
   target_compile_definitions(${component_lib_name}
     PRIVATE
       "OUSTER_ROS_BUILDING_DLL"
-  )
-
-  ament_target_dependencies(${component_lib_name}
-    rclcpp
-    class_loader
-    rclcpp_components
-    rclcpp_lifecycle
-    std_msgs
-    sensor_msgs
-    geometry_msgs
-    ${additional_dependencies}
   )
 
   target_link_libraries(${component_lib_name}
@@ -216,41 +187,24 @@ if(BUILD_TESTING)
     test/point_transform_test.cpp
     test/point_cloud_compose_test.cpp
   )
-  ament_target_dependencies(${PROJECT_NAME}_test
-    rclcpp
-    ouster_sensor_msgs
-  )
   target_include_directories(${PROJECT_NAME}_test PUBLIC
     ${_ouster_ros_INCLUDE_DIRS}
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
   )
-  target_link_libraries(${PROJECT_NAME}_test ouster_ros_library)
+  # ament_target_dependencies was removed in Rolling/Lyrical; link the modern
+  # per-package target sets instead. ouster_ros_library already carries the rest.
+  target_link_libraries(${PROJECT_NAME}_test
+    ouster_ros_library
+    ${rclcpp_TARGETS}
+    ${ouster_sensor_msgs_TARGETS}
+  )
 endif()
 
 
 # ==== Install ====
-set(OUSTER_INSTALL_TARGETS
-  ouster_ros_library
-  os_sensor_component
-  os_replay_component
-  os_cloud_component
-  os_image_component
-  os_pinhole_component
-  os_driver_component
-)
-if (BUILD_PCAP)
-  list(APPEND OUSTER_INSTALL_TARGETS os_pcap_component)
-endif()
-
-install(
-  TARGETS
-    ${OUSTER_INSTALL_TARGETS}
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin
-)
-
+# Component libraries and their generated node executables are installed by
+# ament_auto_add_library / rclcpp_components_register_node + ament_auto_package().
 install(
   DIRECTORY
     include/${PROJECT_NAME}/
@@ -280,8 +234,4 @@ install(
     share/${PROJECT_NAME}
 )
 
-ament_export_include_directories(include) 
-ament_export_dependencies(rosidl_default_runtime)
-ament_export_libraries(ouster_ros_library)
-ament_export_dependencies(${ouster_ros_library_deps})
-ament_package()
+ament_auto_package()
