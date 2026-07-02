@@ -234,4 +234,9 @@ install(
     share/${PROJECT_NAME}
 )
 
+# Export the top-level `include` dir (not just include/ouster_ros): ouster_ros
+# re-ships the vendored SDK's `ouster/*` headers there (see install() above), and
+# downstream consumers (e.g. gz_sensors_ouster) #include <ouster/...> through us.
+ament_export_include_directories(include)
+
 ament_auto_package()
