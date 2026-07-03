@@ -141,8 +141,11 @@ void scan_to_cloud_f(ouster_ros::Cloud<PointT>& cloud, PointS& staging_point,
 
     for (auto u = 0; u < h; u += rows_step) {
         for (auto v = 0; v < w; ++v) {   // TODO[UN]: consider cols_step in future
+            // Normalize into [0, w): an out-of-range or negative shift from
+            // untrusted metadata would otherwise make (v + w - shift) negative
+            // and produce a negative (out-of-bounds) src_idx.
             const auto v_shift =
-                destagger ? (v + w - pixel_shift_by_row[u]) % w : v;
+                destagger ? ((v - pixel_shift_by_row[u]) % w + w) % w : v;
             const auto src_idx = u * w + v_shift;
             const auto xyz = points.row(src_idx);
             const auto tgt_idx =

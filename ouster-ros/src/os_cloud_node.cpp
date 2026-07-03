@@ -109,6 +109,13 @@ class OusterCloud : public OusterProcessingNodeBase {
                 "imu_packets", selected_qos,
                 [this](const PacketMsg::ConstSharedPtr msg) {
                     if (imu_packet_handler) {
+                        if (!packet_format ||
+                            msg->buf.size() < packet_format->imu_packet_size) {
+                            RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1,
+                                "dropping undersized imu_packets msg ("
+                                << msg->buf.size() << " bytes)");
+                            return;
+                        }
                         // TODO[UN]: this is not ideal since we can't reuse the msg buffer
                         // Need to redefine the Packet object and allow use of array_views
                         ImuPacket imu_packet(msg->buf.size());
@@ -241,6 +248,16 @@ class OusterCloud : public OusterProcessingNodeBase {
             lidar_packet_sub = create_subscription<PacketMsg>(
                 "lidar_packets", selected_qos,
                 [this](const PacketMsg::ConstSharedPtr msg) {
+                    // Reject undersized buffers: the SDK parser reads header
+                    // fields at fixed offsets up to lidar_packet_size, so a
+                    // short (or empty) message would read out of bounds.
+                    if (!packet_format ||
+                        msg->buf.size() < packet_format->lidar_packet_size) {
+                        RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1,
+                            "dropping undersized lidar_packets msg (" << msg->buf.size()
+                            << " bytes)");
+                        return;
+                    }
                     // TODO[UN]: this is not ideal since we can't reuse the msg buffer
                     // Need to redefine the Packet object and allow use of array_views
                     LidarPacket lidar_packet(msg->buf.size());

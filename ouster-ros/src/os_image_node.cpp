@@ -132,6 +132,9 @@ class OusterImage : public OusterProcessingNodeBase {
 
         auto which_map = n_returns == 1 ? &channel_field_topic_map_1
                                         : &channel_field_topic_map_2;
+        // Clear publishers from any previous metadata delivery so a changed
+        // return-count/profile doesn't leave stale RANGE2/RGB publishers.
+        image_pubs.clear();
         for (auto it = which_map->begin(); it != which_map->end(); ++it) {
             image_pubs[it->first] =
                 create_publisher<sensor_msgs::msg::Image>(it->second,
@@ -187,6 +190,15 @@ class OusterImage : public OusterProcessingNodeBase {
                 "lidar_packets", selected_qos,
                 [this](const PacketMsg::ConstSharedPtr msg) {
                     if (lidar_packet_handler) {
+                        // Reject undersized buffers before the fixed-offset
+                        // SDK parse to avoid an out-of-bounds read.
+                        if (!packet_format ||
+                            msg->buf.size() < packet_format->lidar_packet_size) {
+                            RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(),
+                                1, "dropping undersized lidar_packets msg ("
+                                << msg->buf.size() << " bytes)");
+                            return;
+                        }
                         // TODO[UN]: this is not ideal since we can't reuse the msg buffer
                         // Need to redefine the Packet object and allow use of array_views
                         LidarPacket lidar_packet(msg->buf.size());

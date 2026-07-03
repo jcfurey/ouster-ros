@@ -40,9 +40,13 @@ class LockFreeRingBuffer {
      *  wouldn't cause the calling thread to be blocked.
      */
     size_t size() const {
-        return write_idx_ >= read_idx_ ?
-            write_idx_ - read_idx_ :
-            write_idx_ + capacity_ - read_idx_;
+        // Snapshot both atomics once: reloading them (as the original
+        // comparison-then-branch did) lets a concurrent advance land between
+        // the two reads, producing a torn result and a size_t underflow to a
+        // huge value in the wrap branch.
+        const size_t w = write_idx_.load();
+        const size_t r = read_idx_.load();
+        return w >= r ? w - r : w + capacity_ - r;
     }
 
     size_t available() const {

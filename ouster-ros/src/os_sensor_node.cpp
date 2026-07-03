@@ -44,8 +44,16 @@ OusterSensor::OusterSensor(const std::string& name,
     declare_parameters();
     staged_config = parse_config_from_ros_parameters();
     attempt_reconnect = get_parameter("attempt_reconnect").as_bool();
-    dormant_period_between_reconnects = 
+    dormant_period_between_reconnects =
         get_parameter("dormant_period_between_reconnects").as_double();
+    // Used directly as a wall-timer period; a zero/negative value would spin
+    // or be rejected by rclcpp, so enforce a sane lower bound.
+    if (dormant_period_between_reconnects <= 0.0) {
+        RCLCPP_WARN(get_logger(),
+            "dormant_period_between_reconnects (%f) must be > 0; clamping to 1.0s",
+            dormant_period_between_reconnects);
+        dormant_period_between_reconnects = 1.0;
+    }
     reconnect_attempts_available =
         get_parameter("max_failed_reconnect_attempts").as_int();
 
@@ -1144,6 +1152,10 @@ void OusterSensor::cleanup() {
     get_metadata_srv.reset();
     get_config_srv.reset();
     set_config_srv.reset();
+    // Tear these down symmetrically too, so a reset/reconfigure cycle doesn't
+    // recreate them while the previous instance is still registered.
+    reset_srv.reset();
+    metadata_pub.reset();
     sensor_connection_thread.reset();
 }
 

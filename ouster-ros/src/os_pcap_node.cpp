@@ -179,6 +179,10 @@ class OusterPcap : public OusterSensorNodeBase {
     void load_metadata_from_file(const std::string& meta_file) {
         try {
             cached_metadata = impl::read_text_file(meta_file);
+            if (cached_metadata.empty()) {
+                throw std::runtime_error(
+                    "metadata file missing, unreadable, or empty: " + meta_file);
+            }
             info = ouster::sdk::core::SensorInfo(cached_metadata);
             display_lidar_info(info);
         } catch (const std::runtime_error& e) {
@@ -221,7 +225,11 @@ class OusterPcap : public OusterSensorNodeBase {
             } while(rclcpp::ok() && packet_read_active && loop);
             RCLCPP_DEBUG(get_logger(),
                          "packet_read_thread done.");
-            rclcpp::shutdown();
+            // Only tear down the ROS context when playback ended on its own
+            // (EOF with loop disabled). If packet_read_active was cleared by
+            // stop_packet_read_thread() (e.g. a lifecycle deactivate), leave
+            // the context intact so the node stays reactivatable.
+            if (packet_read_active && rclcpp::ok()) rclcpp::shutdown();
         });
     }
 
@@ -264,13 +272,29 @@ class OusterPcap : public OusterSensorNodeBase {
         while (rclcpp::ok() && packet_read_active && payload_size) {
             auto start = high_resolution_clock::now();
             if (packet_info.dst_port == info.config.udp_port_imu) {
-                std::memcpy(imu_packet.buf.data(), pcap.current_data(),
-                            pf.imu_packet_size);
-                imu_packet_pub->publish(imu_packet);
+                // Only copy pf.imu_packet_size bytes if the pcap payload
+                // actually holds them; a truncated/crafted capture would
+                // otherwise read past the source buffer.
+                if (payload_size >= pf.imu_packet_size) {
+                    std::memcpy(imu_packet.buf.data(), pcap.current_data(),
+                                pf.imu_packet_size);
+                    imu_packet_pub->publish(imu_packet);
+                } else {
+                    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1,
+                        "skipping truncated imu packet: payload " << payload_size
+                        << " < expected " << pf.imu_packet_size);
+                }
             } else if (packet_info.dst_port == info.config.udp_port_lidar) {
-                std::memcpy(lidar_packet.buf.data(), pcap.current_data(),
-                            pf.lidar_packet_size);
-                lidar_packet_pub->publish(lidar_packet);
+                if (payload_size >= pf.lidar_packet_size) {
+                    std::memcpy(lidar_packet.buf.data(), pcap.current_data(),
+                                pf.lidar_packet_size);
+                    lidar_packet_pub->publish(lidar_packet);
+                } else {
+                    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1,
+                        "skipping truncated lidar packet: payload "
+                        << payload_size << " < expected "
+                        << pf.lidar_packet_size);
+                }
             } else {
                 RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1,
                     "unknown packet /w port:" << packet_info.dst_port);

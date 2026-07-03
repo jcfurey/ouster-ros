@@ -320,6 +320,15 @@ class OusterPinhole : public OusterProcessingNodeBase {
             "lidar_packets", selected_qos,
             [this](const PacketMsg::ConstSharedPtr msg) {
                 if (!lidar_packet_handler_) return;
+                // Reject undersized buffers before the fixed-offset SDK parse
+                // to avoid an out-of-bounds read.
+                if (!packet_format ||
+                    msg->buf.size() < packet_format->lidar_packet_size) {
+                    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1,
+                        "dropping undersized lidar_packets msg ("
+                        << msg->buf.size() << " bytes)");
+                    return;
+                }
                 LidarPacket packet(msg->buf.size());
                 packet.format = packet_format;
                 packet.host_timestamp =
