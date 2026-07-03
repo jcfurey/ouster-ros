@@ -277,9 +277,11 @@ class PinholeProcessor {
                 while (v_dest >= static_cast<double>(W)) {
                     v_dest -= static_cast<double>(W);
                 }
+                // v_dest is in [0, W) but rounding can land exactly on W;
+                // wrap around the panorama seam instead of clamping to W-1.
                 int32_t v_src = static_cast<int32_t>(std::lround(v_dest));
-                if (v_src < 0) v_src = 0;
-                if (v_src >= static_cast<int32_t>(W)) v_src = W - 1;
+                v_src %= static_cast<int32_t>(W);
+                if (v_src < 0) v_src += static_cast<int32_t>(W);
 
                 out.r_src(u, v) = (r_src >= 0 && r_src < static_cast<int32_t>(H))
                                       ? r_src
@@ -400,9 +402,14 @@ class PinholeProcessor {
 
         signal_ae_.update(signal_f, first);
         reflec_ae_.update(reflec_f, first);
-        nearir_buc_.update(nearir_f);
-        nearir_ae_.update(nearir_f, first);
-        nearir_f = nearir_f.sqrt();
+        // NEAR_IR is not duplicated for the 2nd return; only decode/expose it
+        // on the first return so the zero-filled 2nd-return image doesn't
+        // pollute the BUC/AE state or overwrite the panel (see sampling below).
+        if (first) {
+            nearir_buc_.update(nearir_f);
+            nearir_ae_.update(nearir_f, first);
+            nearir_f = nearir_f.sqrt();
+        }
         signal_f = signal_f.sqrt();
 
         // Cast to 16-bit destaggered images (full panorama).
@@ -413,13 +420,15 @@ class PinholeProcessor {
         ouster::sdk::core::img_t<pixel_type> nearir_dest =
             (nearir_f * pixel_value_max).cast<pixel_type>();
 
-        // Sample each panel for each channel.
-        const std::map<std::string, const ouster::sdk::core::img_t<pixel_type>*>
+        // Sample each panel for each channel. NEAR_IR is only produced on the
+        // first return; skip it for the 2nd return so its (zeroed) buffer does
+        // not overwrite the first return's near-IR panel.
+        std::map<std::string, const ouster::sdk::core::img_t<pixel_type>*>
             channel_to_image{
                 {range_ch, &range_dest},
                 {signal_ch, &signal_dest},
-                {reflec_ch, &reflec_dest},
-                {nearir_ch, &nearir_dest}};
+                {reflec_ch, &reflec_dest}};
+        if (first) channel_to_image[nearir_ch] = &nearir_dest;
 
         for (auto& panel : panels_) {
             for (const auto& chan_img : channel_to_image) {

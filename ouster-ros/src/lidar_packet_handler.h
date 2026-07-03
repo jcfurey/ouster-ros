@@ -29,8 +29,6 @@
 
 #include <ouster/image_processing.h>
 
-namespace ChanField = ouster::sdk::core::ChanField;
-
 namespace {
 
 template <typename T, typename UnaryPredicate>
@@ -60,7 +58,11 @@ uint64_t linear_interpolate(int x0, uint64_t y0, int x1, uint64_t y1, int x) {
 
 // Fast float16 -> float32 conversion for normal-range values.
 inline float f16_bits_to_f32(uint16_t bits) {
-    if (bits == 0) return 0.0f;
+    const uint16_t exponent = bits & 0x7C00u;
+    // Zero or subnormal (magnitude < 2^-14, negligible for color) -> 0.
+    if (exponent == 0) return 0.0f;
+    // Inf / NaN -> 0 so out-of-range encodings can't poison auto-exposure.
+    if (exponent == 0x7C00u) return 0.0f;
     const uint32_t expanded = static_cast<uint32_t>(bits + 0x1C000u) << 13;
     float result;
     std::memcpy(&result, &expanded, sizeof(float));
@@ -76,6 +78,8 @@ inline uint8_t f32_to_u8(float v) {
 }  // namespace
 
 namespace ouster_ros {
+
+namespace ChanField = ouster::sdk::core::ChanField;
 
 using LidarScanProcessor =
     std::function<void(const ouster::sdk::core::LidarScan&, uint64_t, const rclcpp::Time&)>;

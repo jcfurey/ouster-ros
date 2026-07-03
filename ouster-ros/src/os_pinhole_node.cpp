@@ -160,6 +160,15 @@ class OusterPinhole : public OusterProcessingNodeBase {
             cfg.yaw_rad = yaws[i] * M_PI / 180.0;
             cfg.pitch_rad = pick(pitches, i, 0.0) * M_PI / 180.0;
             cfg.hfov_rad = pick(hfovs, i, 90.0) * M_PI / 180.0;
+            // A pinhole model diverges as HFOV -> 180 deg (fx -> 0/inf); reject
+            // out-of-range values instead of building a garbage LUT.
+            if (cfg.hfov_rad <= 0.0 || cfg.hfov_rad >= M_PI) {
+                RCLCPP_FATAL(get_logger(),
+                    "OusterPinhole: panel '%s' hfov (%.3f deg) must be in "
+                    "the open interval (0, 180).",
+                    cfg.name.c_str(), cfg.hfov_rad * 180.0 / M_PI);
+                throw std::runtime_error("panel hfov out of range");
+            }
             cfg.width = static_cast<uint32_t>(pick(widths, i, int64_t{256}));
             cfg.height = static_cast<uint32_t>(pick(heights, i, int64_t{0}));
             cfg.vfov_rad = pick(vfovs, i, 0.0) * M_PI / 180.0;
@@ -216,6 +225,10 @@ class OusterPinhole : public OusterProcessingNodeBase {
         // PinholeProcessor::create returns just the lambda. Re-build a
         // separate helper instance just to reach the panel list, OR
         // build publishers from panel_configs directly + the channel set.
+        // metadata may be re-delivered (transient-local topic, sensor
+        // reconfig); rebuild the publisher list from scratch each time so we
+        // don't accumulate stale publishers or index past the current panels.
+        panel_pubs_.clear();
         const auto channel_topics = pinhole_channel_topics(info.num_returns());
         for (const auto& cfg : panel_configs) {
             PanelPublishers pp;
