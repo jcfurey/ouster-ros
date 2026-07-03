@@ -96,6 +96,10 @@ class OusterDriver : public OusterSensor {
         int num_returns = info.num_returns();
 
         std::vector<LidarScanProcessor> processors;
+        // Only run the packet handler's RGB auto-exposure when a consumer
+        // reads color: a color point type (PCL) or rgb_image (IMG, RGB
+        // profile). Set in the PCL / IMG blocks below.
+        bool needs_rgb = false;
         if (impl::check_token(tokens, "PCL")) {
             lidar_pubs.resize(num_returns);
             for (int i = 0; i < num_returns; ++i) {
@@ -104,6 +108,8 @@ class OusterDriver : public OusterSensor {
             }
 
             auto point_type = get_parameter("point_type").as_string();
+            needs_rgb = needs_rgb ||
+                PointCloudProcessorFactory::point_type_produces_color(point_type);
             auto organized = get_parameter("organized").as_bool();
             auto destagger = get_parameter("destagger").as_bool();
             auto min_range_m = get_parameter("min_range").as_double();
@@ -211,6 +217,8 @@ class OusterDriver : public OusterSensor {
                 channel_field_topic_map_1[ChanField::RGB] = "rgb_image";
                 channel_field_topic_map_2[ChanField::RGB] = "rgb_image";
             }
+            // rgb_image consumes the auto-exposed color fields.
+            needs_rgb = needs_rgb || has_rgb;
 
             auto which_map = num_returns == 1 ? &channel_field_topic_map_1
                                               : &channel_field_topic_map_2;
@@ -234,7 +242,7 @@ class OusterDriver : public OusterSensor {
             lidar_packet_handler = LidarPacketHandler::create(
                 info, processors, timestamp_mode,
                 static_cast<int64_t>(ptp_utc_tai_offset * 1e+9),
-                min_scan_valid_columns_ratio);
+                min_scan_valid_columns_ratio, needs_rgb);
 
         if (impl::check_token(tokens, "TLM")) {
             telemetry_pub =

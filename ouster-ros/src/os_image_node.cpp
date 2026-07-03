@@ -63,7 +63,13 @@ class OusterImage : public OusterProcessingNodeBase {
         declare_parameter("distortion_model", "plumb_bob");
         declare_parameter("frame_id", "os_lidar");
         declare_parameter("optical_frame", "");
-        declare_parameter("publish_camera_info", true);
+        // Off by default: the os_image range/signal/etc. images are a full
+        // 360-deg equirectangular panorama, which cannot be described by a
+        // pinhole (plumb_bob) CameraInfo. Publishing one invites downstream
+        // rectification/back-projection that silently mis-projects every
+        // off-center column. Opt in only for display overlay; use the
+        // os_pinhole node for a true pinhole camera + CameraInfo.
+        declare_parameter("publish_camera_info", false);
         create_metadata_subscriber(
             [this](const auto& msg) { metadata_handler(msg); });
         RCLCPP_INFO(get_logger(), "OusterImage: node initialized!");
@@ -171,10 +177,12 @@ class OusterImage : public OusterProcessingNodeBase {
                 })
         };
 
+        // os_image consumes color only when it publishes rgb_image, i.e. on
+        // RGB-capable profiles (has_rgb, computed above).
         lidar_packet_handler = LidarPacketHandler::create(
             info, processors, timestamp_mode,
             static_cast<int64_t>(ptp_utc_tai_offset * 1e+9),
-            min_scan_valid_columns_ratio);
+            min_scan_valid_columns_ratio, /*process_rgb=*/has_rgb);
         lidar_packet_sub = create_subscription<PacketMsg>(
                 "lidar_packets", selected_qos,
                 [this](const PacketMsg::ConstSharedPtr msg) {
@@ -237,6 +245,13 @@ class OusterImage : public OusterProcessingNodeBase {
         const ouster::sdk::core::SensorInfo& sensor_info,
         const std::string& frame_id,
         const rclcpp::QoS& qos) {
+        RCLCPP_WARN(get_logger(),
+            "os_image CameraInfo describes an equirectangular (panoramic) "
+            "projection, not a real pinhole camera; the advertised "
+            "distortion_model does not apply. It is intended for display "
+            "overlay only and must NOT be used for pinhole "
+            "rectification/back-projection. Use the os_pinhole node for a "
+            "true pinhole camera + CameraInfo.");
         uint32_t H = sensor_info.format.pixels_per_column;
         uint32_t W = sensor_info.format.columns_per_frame;
 

@@ -132,6 +132,9 @@ class OusterCloud : public OusterProcessingNodeBase {
         int num_returns = info.num_returns();
 
         std::vector<LidarScanProcessor> processors;
+        // Only run the packet handler's RGB auto-exposure when a color point
+        // type is actually requested (set inside the PCL block below).
+        bool needs_rgb = false;
 
         if (impl::check_token(tokens, "PCL")) {
             lidar_pubs.resize(num_returns);
@@ -141,6 +144,8 @@ class OusterCloud : public OusterProcessingNodeBase {
             }
 
             auto point_type = get_parameter("point_type").as_string();
+            needs_rgb =
+                PointCloudProcessorFactory::point_type_produces_color(point_type);
             auto organized = get_parameter("organized").as_bool();
             auto destagger = get_parameter("destagger").as_bool();
             auto min_range_m = get_parameter("min_range").as_double();
@@ -218,7 +223,7 @@ class OusterCloud : public OusterProcessingNodeBase {
             lidar_packet_handler = LidarPacketHandler::create(
                 info, processors, timestamp_mode,
                 static_cast<int64_t>(ptp_utc_tai_offset * 1e+9),
-                min_scan_valid_columns_ratio);
+                min_scan_valid_columns_ratio, needs_rgb);
         }
 
         if (impl::check_token(tokens, "TLM")) {

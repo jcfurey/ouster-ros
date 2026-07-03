@@ -84,6 +84,17 @@ class OusterPinhole : public OusterProcessingNodeBase {
                                                 std::vector<double>{0.0});
 
         // Frame configuration.
+        // NOTE: parent_frame MUST name the sensor's lidar frame (the Ouster
+        // lidar-frame convention: +X forward, +Z up, azimuth measured CCW
+        // about +Z). The panel LUT in PinholeProcessor::compute_lut derives
+        // each pixel's azimuth/elevation directly in that convention, so the
+        // static transforms below are only geometrically valid when the
+        // parent is the lidar frame. It may be renamed/namespaced (e.g.
+        // "lidar0/os_lidar"), but pointing it at a differently-oriented frame
+        // (e.g. os_sensor, a 180-deg yaw of os_lidar) silently mis-orients
+        // every panel. We do not resolve an arbitrary parent->lidar rotation
+        // here (that would require a TF lookup), so the parent must already be
+        // the lidar frame.
         declare_parameter("parent_frame", "os_lidar");
         declare_parameter("lidar_namespace", "lidar0");
         declare_parameter("optical_frame_template",
@@ -298,10 +309,12 @@ class OusterPinhole : public OusterProcessingNodeBase {
             panel_pubs_.push_back(std::move(pp));
         }
 
+        // The pinhole panels only sample range/signal/reflec/nearir, never
+        // color, so skip the RGB auto-exposure path entirely.
         lidar_packet_handler_ = LidarPacketHandler::create(
             info, processors, timestamp_mode,
             static_cast<int64_t>(ptp_utc_tai_offset * 1e+9),
-            static_cast<float>(min_ratio));
+            static_cast<float>(min_ratio), /*process_rgb=*/false);
 
         lidar_packet_sub_ = create_subscription<PacketMsg>(
             "lidar_packets", selected_qos,
