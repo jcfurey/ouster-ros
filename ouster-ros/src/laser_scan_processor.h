@@ -27,7 +27,8 @@ class LaserScanProcessor {
                        const std::string& frame_id, uint16_t ring,
                        PostProcessingFn func)
         : frame(frame_id),
-          ld_mode(info.config.lidar_mode.value()),
+          ld_mode(info.config.lidar_mode.value_or(
+              ouster::sdk::core::LidarMode(0, 0))),
           ring_(ring),
           pixel_shift_by_row(info.format.pixel_shift_by_row),
           scan_msgs(info.num_returns()),

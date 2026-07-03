@@ -26,6 +26,7 @@
 #include <atomic>
 #include <vector>
 #include <string>
+#include <cstring>
 
 #include <ouster/image_processing.h>
 
@@ -58,6 +59,9 @@ uint64_t linear_interpolate(int x0, uint64_t y0, int x1, uint64_t y1, int x) {
 
 // Fast float16 -> float32 conversion for normal-range values.
 inline float f16_bits_to_f32(uint16_t bits) {
+    // Colors are non-negative; a sign-set encoding is out of range and would
+    // otherwise be decoded as a large positive value that skews auto-exposure.
+    if (bits & 0x8000u) return 0.0f;
     const uint16_t exponent = bits & 0x7C00u;
     // Zero or subnormal (magnitude < 2^-14, negligible for color) -> 0.
     if (exponent == 0) return 0.0f;
@@ -143,7 +147,11 @@ class LidarPacketHandler {
         });
 
         // initalize time handlers
-        scan_col_ts_spacing_ns = compute_scan_col_ts_spacing_ns(info.config.lidar_mode.value());
+        // lidar_mode may be absent when it is missing from the sensor
+        // metadata (e.g. replay of a partial metadata JSON); fall back to an
+        // unspecified mode instead of throwing std::bad_optional_access.
+        scan_col_ts_spacing_ns = compute_scan_col_ts_spacing_ns(
+            info.config.lidar_mode.value_or(ouster::sdk::core::LidarMode(0, 0)));
         compute_scan_ts = [this](const auto& ts_v) {
             return compute_scan_ts_0(ts_v);
         };

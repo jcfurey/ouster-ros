@@ -40,7 +40,9 @@ struct ColorPoint : public _ColorPoint {
       ring = pt.ring;
       ambient = pt.ambient;
       range = pt.range;
-      r = pt.r; g = pt.g; b = pt.b;
+      // Copy the whole packed color word (r, g, b AND a); assigning r/g/b
+      // individually would leave the union's alpha byte indeterminate.
+      rgba = pt.rgba;
     }
 
     inline ColorPoint()
@@ -86,7 +88,7 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(ouster_ros::ColorPoint,
     (std::uint16_t, ring, ring)
     (std::uint16_t, ambient, ambient)
     (std::uint32_t, range, range)
-    (std::uint32_t, rgb, rgb)
+    (float, rgb, rgb)
 )
 
 // clang-format on

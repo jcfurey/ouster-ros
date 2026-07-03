@@ -144,13 +144,35 @@ class OusterPinhole : public OusterProcessingNodeBase {
             throw std::runtime_error("panel_yaws_deg length mismatch");
         }
 
+        // Every other per-panel array must be empty (use defaults), a single
+        // value (broadcast to all panels), or exactly one-per-panel. Reject
+        // any other length loudly instead of silently index-wrapping it.
+        auto check_len = [&](const auto& vec, const char* name) {
+            if (!vec.empty() && vec.size() != 1 && vec.size() != names.size()) {
+                RCLCPP_FATAL(get_logger(),
+                    "OusterPinhole: %s length (%zu) must be 0, 1, or match "
+                    "panel_names length (%zu).",
+                    name, vec.size(), names.size());
+                throw std::runtime_error(std::string(name) + " length mismatch");
+            }
+        };
+        check_len(pitches, "panel_pitches_deg");
+        check_len(hfovs, "panel_hfovs_deg");
+        check_len(widths, "panel_widths");
+        check_len(heights, "panel_heights");
+        check_len(vfovs, "panel_vfovs_deg");
+
         auto pick = [&](const auto& vec, size_t i, auto fallback) {
             if (vec.empty()) return fallback;
-            // Singleton broadcasts to all panels; partial-length arrays
-            // wrap (caller should pass length 1 or length names.size()).
-            const size_t idx = (vec.size() == 1) ? 0 : (i % vec.size());
+            // Length is validated above to be 1 or names.size(); index 0 for
+            // the single-value broadcast, else one-per-panel.
+            const size_t idx = (vec.size() == 1) ? 0 : i;
             return static_cast<decltype(fallback)>(vec[idx]);
         };
+
+        // Panels are images; guard against absurd/negative dimensions that
+        // would wrap to a huge uint32 and blow up the buffer allocation.
+        constexpr int64_t kMaxPanelDim = 8192;
 
         std::vector<PinholeProcessor::PanelConfig> out;
         out.reserve(names.size());
@@ -169,9 +191,37 @@ class OusterPinhole : public OusterProcessingNodeBase {
                     cfg.name.c_str(), cfg.hfov_rad * 180.0 / M_PI);
                 throw std::runtime_error("panel hfov out of range");
             }
-            cfg.width = static_cast<uint32_t>(pick(widths, i, int64_t{256}));
-            cfg.height = static_cast<uint32_t>(pick(heights, i, int64_t{0}));
-            cfg.vfov_rad = pick(vfovs, i, 0.0) * M_PI / 180.0;
+            const int64_t width_i = pick(widths, i, int64_t{256});
+            if (width_i <= 0 || width_i > kMaxPanelDim) {
+                RCLCPP_FATAL(get_logger(),
+                    "OusterPinhole: panel '%s' width (%ld) must be in [1, %ld].",
+                    cfg.name.c_str(), static_cast<long>(width_i),
+                    static_cast<long>(kMaxPanelDim));
+                throw std::runtime_error("panel width out of range");
+            }
+            // height == 0 is the sentinel for "auto-fit from the lidar VFOV".
+            const int64_t height_i = pick(heights, i, int64_t{0});
+            if (height_i < 0 || height_i > kMaxPanelDim) {
+                RCLCPP_FATAL(get_logger(),
+                    "OusterPinhole: panel '%s' height (%ld) must be in "
+                    "[0, %ld] (0 = auto-fit).",
+                    cfg.name.c_str(), static_cast<long>(height_i),
+                    static_cast<long>(kMaxPanelDim));
+                throw std::runtime_error("panel height out of range");
+            }
+            // vfov == 0 means "derive from the lidar"; a set override must be
+            // a valid pinhole vertical FOV.
+            const double vfov_deg = pick(vfovs, i, 0.0);
+            if (vfov_deg < 0.0 || vfov_deg >= 180.0) {
+                RCLCPP_FATAL(get_logger(),
+                    "OusterPinhole: panel '%s' vfov (%.3f deg) must be in "
+                    "[0, 180) (0 = auto).",
+                    cfg.name.c_str(), vfov_deg);
+                throw std::runtime_error("panel vfov out of range");
+            }
+            cfg.width = static_cast<uint32_t>(width_i);
+            cfg.height = static_cast<uint32_t>(height_i);
+            cfg.vfov_rad = vfov_deg * M_PI / 180.0;
             out.push_back(cfg);
         }
         return out;

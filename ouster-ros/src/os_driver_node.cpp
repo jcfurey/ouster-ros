@@ -182,15 +182,14 @@ class OusterDriver : public OusterSensor {
         }
 
         if (impl::check_token(tokens, "IMG")) {
-            const std::map<std::string, std::string>
+            std::map<std::string, std::string>
                 channel_field_topic_map_1{
                     {ChanField::RANGE, "range_image"},
                     {ChanField::SIGNAL, "signal_image"},
                     {ChanField::REFLECTIVITY, "reflec_image"},
-                    {ChanField::NEAR_IR, "nearir_image"},
-                    {ChanField::RGB, "rgb_image"}};
+                    {ChanField::NEAR_IR, "nearir_image"}};
 
-            const std::map<std::string, std::string>
+            std::map<std::string, std::string>
                 channel_field_topic_map_2{
                     {ChanField::RANGE, "range_image"},
                     {ChanField::SIGNAL, "signal_image"},
@@ -198,8 +197,20 @@ class OusterDriver : public OusterSensor {
                     {ChanField::NEAR_IR, "nearir_image"},
                     {ChanField::RANGE2, "range_image2"},
                     {ChanField::SIGNAL2, "signal_image2"},
-                    {ChanField::REFLECTIVITY2, "reflec_image2"},
-                    {ChanField::RGB, "rgb_image"}};
+                    {ChanField::REFLECTIVITY2, "reflec_image2"}};
+
+            // Only advertise rgb_image for RGB-capable profiles; otherwise the
+            // topic is advertised but never published (ImageProcessor has no
+            // ChanField::RGB image for non-RGB profiles).
+            const bool has_rgb =
+                info.format.udp_profile_lidar ==
+                    ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16 ||
+                info.format.udp_profile_lidar ==
+                    ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16_DUAL;
+            if (has_rgb) {
+                channel_field_topic_map_1[ChanField::RGB] = "rgb_image";
+                channel_field_topic_map_2[ChanField::RGB] = "rgb_image";
+            }
 
             auto which_map = num_returns == 1 ? &channel_field_topic_map_1
                                               : &channel_field_topic_map_2;

@@ -142,9 +142,14 @@ class PinholeProcessor {
             const double vfov_rad = (cfg.vfov_rad > 0.0)
                 ? cfg.vfov_rad
                 : derive_lidar_vfov_rad();
-            ph = static_cast<uint32_t>(std::round(
-                2.0 * fy * std::tan(0.5 * vfov_rad)));
-            if (ph < 1) ph = 1;
+            double ph_d = std::round(2.0 * fy * std::tan(0.5 * vfov_rad));
+            // A very small HFOV inflates fy (hence the auto-fit height)
+            // without bound, and a degenerate vfov could be non-finite; clamp
+            // to a sane range so we never attempt a runaway image allocation.
+            if (!std::isfinite(ph_d) || ph_d < 1.0) ph_d = 1.0;
+            constexpr double kMaxPanelDim = 8192.0;
+            if (ph_d > kMaxPanelDim) ph_d = kMaxPanelDim;
+            ph = static_cast<uint32_t>(ph_d);
         }
 
         const double cx = static_cast<double>(pw) / 2.0;

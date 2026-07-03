@@ -637,14 +637,17 @@ void OusterSensor::parse_lidar_mode(SensorConfig& config) {
         return;
     }
 
-    try {
-        auto lidar_mode = ouster::sdk::core::lidar_mode_of_string(lidar_mode_arg);
-        config.lidar_mode = lidar_mode;
-    } catch (const std::exception& e) {
-        auto error_msg = "Invalid lidar mode: " + lidar_mode_arg + ", exception details: " + e.what();
+    // lidar_mode_of_string returns an empty optional on an unrecognized
+    // string (it catches std::invalid_argument internally and never throws),
+    // so check the optional explicitly instead of relying on a catch that
+    // would never fire.
+    auto lidar_mode = ouster::sdk::core::lidar_mode_of_string(lidar_mode_arg);
+    if (!lidar_mode) {
+        auto error_msg = "Invalid lidar mode: " + lidar_mode_arg;
         RCLCPP_FATAL_STREAM(get_logger(), error_msg);
         throw std::runtime_error(error_msg);
     }
+    config.lidar_mode = lidar_mode;
 }
 
 void OusterSensor::parse_timestamp_mode(SensorConfig& config) {
@@ -1002,6 +1005,13 @@ void OusterSensor::populate_metadata_defaults(
         RCLCPP_WARN(get_logger(),
                     "Firmware < %s not supported; output may not be reliable",
                     ouster::sdk::sensor::MIN_VERSION.simple_version_string().c_str());
+
+    if (!info.config.lidar_mode) {
+        RCLCPP_WARN(
+            get_logger(),
+            "Lidar mode not found in metadata; output may not be reliable");
+        info.config.lidar_mode = ouster::sdk::core::LidarMode(0, 0);
+    }
 
     if (!info.prod_line.size()) info.prod_line = "UNKNOWN";
 

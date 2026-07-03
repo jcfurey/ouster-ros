@@ -28,7 +28,12 @@
 #else
 #include <tf2/LinearMath/Quaternion.h>
 #endif
+#if __has_include(<tf2_ros/static_transform_broadcaster.hpp>)
+#include <tf2_ros/static_transform_broadcaster.hpp>
+#else
 #include <tf2_ros/static_transform_broadcaster.h>
+#endif
+#include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include "lidar_packet_handler.h"
 #include "image_processor.h"
@@ -88,15 +93,14 @@ class OusterImage : public OusterProcessingNodeBase {
         auto selected_qos =
             use_system_default_qos ? system_default_qos : sensor_data_qos;
 
-        const std::map<std::string, std::string>
+        std::map<std::string, std::string>
             channel_field_topic_map_1 {
                 {ChanField::RANGE, "range_image"},
                 {ChanField::SIGNAL, "signal_image"},
                 {ChanField::REFLECTIVITY, "reflec_image"},
-                {ChanField::NEAR_IR, "nearir_image"},
-                {ChanField::RGB, "rgb_image"}};
+                {ChanField::NEAR_IR, "nearir_image"}};
 
-        const std::map<std::string, std::string>
+        std::map<std::string, std::string>
             channel_field_topic_map_2 {
                 {ChanField::RANGE, "range_image"},
                 {ChanField::SIGNAL, "signal_image"},
@@ -104,8 +108,21 @@ class OusterImage : public OusterProcessingNodeBase {
                 {ChanField::NEAR_IR, "nearir_image"},
                 {ChanField::RANGE2, "range_image2"},
                 {ChanField::SIGNAL2, "signal_image2"},
-                {ChanField::REFLECTIVITY2, "reflec_image2"},
-                {ChanField::RGB, "rgb_image"}};
+                {ChanField::REFLECTIVITY2, "reflec_image2"}};
+
+        // Only advertise rgb_image for RGB-capable profiles. ImageProcessor
+        // produces a ChanField::RGB image only for these, so advertising the
+        // topic otherwise leaves a publisher that never publishes (a
+        // subscriber would block forever with no diagnostic).
+        const bool has_rgb =
+            info.format.udp_profile_lidar ==
+                ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16 ||
+            info.format.udp_profile_lidar ==
+                ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16_DUAL;
+        if (has_rgb) {
+            channel_field_topic_map_1[ChanField::RGB] = "rgb_image";
+            channel_field_topic_map_2[ChanField::RGB] = "rgb_image";
+        }
 
         auto which_map = n_returns == 1 ? &channel_field_topic_map_1
                                         : &channel_field_topic_map_2;
