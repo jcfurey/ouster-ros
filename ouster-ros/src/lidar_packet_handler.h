@@ -43,18 +43,16 @@ int find_if_reverse(const Eigen::Array<T, -1, 1>& array,
 }
 
 uint64_t linear_interpolate(int x0, uint64_t y0, int x1, uint64_t y1, int x) {
-    uint64_t min_v, max_v;
-    double sign;
-    if (y1 > y0) {
-        min_v = y0;
-        max_v = y1;
-        sign = +1;
-    } else {
-        min_v = y1;
-        max_v = y0;
-        sign = -1;
-    }
-    return y0 + (x - x0) * sign * (max_v - min_v) / (x1 - x0);
+    // Integer interpolation to preserve full uint64 precision: PTP/TAI
+    // timestamps exceed the 2^53 exact-integer range of double, so the old
+    // double arithmetic quantized results by hundreds of ns. __int128 holds
+    // the intermediate product without overflow and carries the sign of
+    // (y1 - y0) naturally.
+    const long long span = static_cast<long long>(x1) - static_cast<long long>(x0);
+    if (span == 0) return y0;
+    const long long dx = static_cast<long long>(x) - static_cast<long long>(x0);
+    const __int128 dy = static_cast<__int128>(y1) - static_cast<__int128>(y0);
+    return static_cast<uint64_t>(static_cast<__int128>(y0) + dy * dx / span);
 }
 
 // Fast float16 -> float32 conversion for normal-range values.

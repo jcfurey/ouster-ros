@@ -1,5 +1,8 @@
 <launch>
 
+  <!-- NOTE: this launch uses the os_pcap executable, which is built only when
+       the package is compiled with BUILD_PCAP=ON (the default). If you built
+       with -DBUILD_PCAP=OFF, os_pcap will not be found. -->
   <!-- NOTE: pcap replay node does not implement clock -->
   <set_parameter name="use_sim_time" value="false" />
 

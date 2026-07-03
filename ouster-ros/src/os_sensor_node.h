@@ -186,9 +186,13 @@ class OusterSensor : public OusterSensorNodeBase {
     std::unique_ptr<std::thread> lidar_packets_processing_thread;
 
     bool persist_config = false;
-    bool force_sensor_reinit = false;
+    // Written from both the sensor-connection thread (reactivate_sensor /
+    // init_id_changed on read errors) and the executor thread (reset_sensor
+    // via the /reset and /set_config services); atomic to avoid a data race
+    // on concurrent access.
+    std::atomic<bool> force_sensor_reinit = {false};
     bool auto_udp_allowed = false;
-    bool reset_last_init_id = true;
+    std::atomic<bool> reset_last_init_id = {true};
     std::optional<uint32_t> last_init_id;
 
     // TODO: add as a ros parameter

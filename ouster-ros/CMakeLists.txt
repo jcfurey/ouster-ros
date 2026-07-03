@@ -46,9 +46,12 @@ set(_ouster_ros_INCLUDE_DIRS
 set(_SAVE_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF)
 
-option(BUILD_VIZ "Turn off building VIZ" OFF)
-option(BUILD_PCAP "Turn off building PCAP" OFF)
-option(BUILD_OSF "Turn off building OSF" OFF)
+option(BUILD_VIZ "Build the SDK visualizer" OFF)
+# ON by default so the shipped os_pcap node / replay_pcap.launch work out of
+# the box; the pcap dependencies (libtins-dev, libzip-dev) are already
+# declared as build dependencies in package.xml.
+option(BUILD_PCAP "Build the os_pcap node for pcap replay" ON)
+option(BUILD_OSF "Build the SDK OSF support" OFF)
 option(BUILD_MAPPING "Turn off building MAPPING" OFF)
 find_package(OusterSDK REQUIRED)
 

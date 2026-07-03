@@ -305,7 +305,17 @@ class OusterPcap : public OusterSensorNodeBase {
             auto curr_packet_ts = packet_info.timestamp;
             auto end = high_resolution_clock::now();
             auto dt = (curr_packet_ts - prev_packet_ts) - (end - start);
-            std::this_thread::sleep_for(dt);  // pace packet generation
+            // Pace packet generation, but sleep in short slices so a large
+            // inter-packet gap (paused or edited recording) can't block
+            // stop_packet_read_thread()'s join during deactivate/shutdown.
+            auto remaining = duration_cast<nanoseconds>(dt);
+            const auto slice = duration_cast<nanoseconds>(milliseconds(20));
+            while (remaining > nanoseconds::zero() && rclcpp::ok() &&
+                   packet_read_active) {
+                auto chunk = remaining < slice ? remaining : slice;
+                std::this_thread::sleep_for(chunk);
+                remaining -= chunk;
+            }
 
             if (curr_packet_ts - last_update > UPDATE_PERIOD) {
                 last_update = curr_packet_ts;

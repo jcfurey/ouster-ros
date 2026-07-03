@@ -85,6 +85,19 @@ class OusterCloud : public OusterProcessingNodeBase {
     }
 
     void create_publishers_subscriptions(const ouster::sdk::core::SensorInfo& info) {
+        // Metadata can be re-delivered (latched topic, sensor reactivation).
+        // Tear down the previous state before rebuilding, in order: drop the
+        // subscriptions first so no new packets are enqueued, then destroy the
+        // handlers — the LidarPacketHandler destructor joins its background
+        // processing thread, which publishes into lidar_pubs/scan_pubs, so it
+        // must finish before we clear/resize those vectors.
+        lidar_packet_sub.reset();
+        imu_packet_sub.reset();
+        lidar_packet_handler = nullptr;
+        imu_packet_handler = nullptr;
+        lidar_pubs.clear();
+        scan_pubs.clear();
+
         auto timestamp_mode = get_parameter("timestamp_mode").as_string();
         auto ptp_utc_tai_offset =
             get_parameter("ptp_utc_tai_offset").as_double();
