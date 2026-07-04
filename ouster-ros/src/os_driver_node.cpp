@@ -96,6 +96,10 @@ class OusterDriver : public OusterSensor {
         int num_returns = info.num_returns();
 
         std::vector<LidarScanProcessor> processors;
+        // Only run the packet handler's RGB auto-exposure when a consumer
+        // reads color: a color point type (PCL) or rgb_image (IMG, RGB
+        // profile). Set in the PCL / IMG blocks below.
+        bool needs_rgb = false;
         if (impl::check_token(tokens, "PCL")) {
             lidar_pubs.resize(num_returns);
             for (int i = 0; i < num_returns; ++i) {
@@ -104,6 +108,8 @@ class OusterDriver : public OusterSensor {
             }
 
             auto point_type = get_parameter("point_type").as_string();
+            needs_rgb = needs_rgb ||
+                PointCloudProcessorFactory::point_type_produces_color(point_type);
             auto organized = get_parameter("organized").as_bool();
             auto destagger = get_parameter("destagger").as_bool();
             auto min_range_m = get_parameter("min_range").as_double();
@@ -182,15 +188,14 @@ class OusterDriver : public OusterSensor {
         }
 
         if (impl::check_token(tokens, "IMG")) {
-            const std::map<std::string, std::string>
+            std::map<std::string, std::string>
                 channel_field_topic_map_1{
                     {ChanField::RANGE, "range_image"},
                     {ChanField::SIGNAL, "signal_image"},
                     {ChanField::REFLECTIVITY, "reflec_image"},
-                    {ChanField::NEAR_IR, "nearir_image"},
-                    {ChanField::RGB, "rgb_image"}};
+                    {ChanField::NEAR_IR, "nearir_image"}};
 
-            const std::map<std::string, std::string>
+            std::map<std::string, std::string>
                 channel_field_topic_map_2{
                     {ChanField::RANGE, "range_image"},
                     {ChanField::SIGNAL, "signal_image"},
@@ -198,8 +203,22 @@ class OusterDriver : public OusterSensor {
                     {ChanField::NEAR_IR, "nearir_image"},
                     {ChanField::RANGE2, "range_image2"},
                     {ChanField::SIGNAL2, "signal_image2"},
-                    {ChanField::REFLECTIVITY2, "reflec_image2"},
-                    {ChanField::RGB, "rgb_image"}};
+                    {ChanField::REFLECTIVITY2, "reflec_image2"}};
+
+            // Only advertise rgb_image for RGB-capable profiles; otherwise the
+            // topic is advertised but never published (ImageProcessor has no
+            // ChanField::RGB image for non-RGB profiles).
+            const bool has_rgb =
+                info.format.udp_profile_lidar ==
+                    ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16 ||
+                info.format.udp_profile_lidar ==
+                    ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16_DUAL;
+            if (has_rgb) {
+                channel_field_topic_map_1[ChanField::RGB] = "rgb_image";
+                channel_field_topic_map_2[ChanField::RGB] = "rgb_image";
+            }
+            // rgb_image consumes the auto-exposed color fields.
+            needs_rgb = needs_rgb || has_rgb;
 
             auto which_map = num_returns == 1 ? &channel_field_topic_map_1
                                               : &channel_field_topic_map_2;
@@ -223,7 +242,7 @@ class OusterDriver : public OusterSensor {
             lidar_packet_handler = LidarPacketHandler::create(
                 info, processors, timestamp_mode,
                 static_cast<int64_t>(ptp_utc_tai_offset * 1e+9),
-                min_scan_valid_columns_ratio);
+                min_scan_valid_columns_ratio, needs_rgb);
 
         if (impl::check_token(tokens, "TLM")) {
             telemetry_pub =
@@ -268,9 +287,14 @@ class OusterDriver : public OusterSensor {
         imu_packet_handler = nullptr;
         lidar_packet_handler = nullptr;
         imu_pub.reset();
-        for (auto p : lidar_pubs) p.reset();
-        for (auto p : scan_pubs) p.reset();
-        for (auto p : image_pubs) p.second.reset();
+        // Iterate by reference: `auto p` copies the shared_ptr, so resetting
+        // the copy would leave the stored publisher advertised.
+        for (auto& p : lidar_pubs) p.reset();
+        for (auto& p : scan_pubs) p.reset();
+        for (auto& p : image_pubs) p.second.reset();
+        lidar_pubs.clear();
+        scan_pubs.clear();
+        image_pubs.clear();
         OusterSensor::cleanup();
     }
 

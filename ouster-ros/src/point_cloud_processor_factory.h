@@ -223,6 +223,14 @@ class PointCloudProcessorFactory {
                point_type == "color_point";
     }
 
+    // Point types that carry per-point RGB color; these consume the
+    // auto-exposed R_U8/G_U8/B_U8 fields produced by LidarPacketHandler, so
+    // that (comparatively expensive) RGB path is only worth running for them.
+    static bool point_type_produces_color(const std::string& point_type) {
+        return point_type == "xyzrgb" || point_type == "xyzrgba" ||
+               point_type == "color_point";
+    }
+
     static bool profile_has_intensity(UDPProfileLidar profile) {
         return profile == UDPProfileLidar::LEGACY ||
                profile == UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_DUAL ||

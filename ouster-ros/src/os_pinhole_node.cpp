@@ -84,6 +84,17 @@ class OusterPinhole : public OusterProcessingNodeBase {
                                                 std::vector<double>{0.0});
 
         // Frame configuration.
+        // NOTE: parent_frame MUST name the sensor's lidar frame (the Ouster
+        // lidar-frame convention: +X forward, +Z up, azimuth measured CCW
+        // about +Z). The panel LUT in PinholeProcessor::compute_lut derives
+        // each pixel's azimuth/elevation directly in that convention, so the
+        // static transforms below are only geometrically valid when the
+        // parent is the lidar frame. It may be renamed/namespaced (e.g.
+        // "lidar0/os_lidar"), but pointing it at a differently-oriented frame
+        // (e.g. os_sensor, a 180-deg yaw of os_lidar) silently mis-orients
+        // every panel. We do not resolve an arbitrary parent->lidar rotation
+        // here (that would require a TF lookup), so the parent must already be
+        // the lidar frame.
         declare_parameter("parent_frame", "os_lidar");
         declare_parameter("lidar_namespace", "lidar0");
         declare_parameter("optical_frame_template",
@@ -144,13 +155,35 @@ class OusterPinhole : public OusterProcessingNodeBase {
             throw std::runtime_error("panel_yaws_deg length mismatch");
         }
 
+        // Every other per-panel array must be empty (use defaults), a single
+        // value (broadcast to all panels), or exactly one-per-panel. Reject
+        // any other length loudly instead of silently index-wrapping it.
+        auto check_len = [&](const auto& vec, const char* name) {
+            if (!vec.empty() && vec.size() != 1 && vec.size() != names.size()) {
+                RCLCPP_FATAL(get_logger(),
+                    "OusterPinhole: %s length (%zu) must be 0, 1, or match "
+                    "panel_names length (%zu).",
+                    name, vec.size(), names.size());
+                throw std::runtime_error(std::string(name) + " length mismatch");
+            }
+        };
+        check_len(pitches, "panel_pitches_deg");
+        check_len(hfovs, "panel_hfovs_deg");
+        check_len(widths, "panel_widths");
+        check_len(heights, "panel_heights");
+        check_len(vfovs, "panel_vfovs_deg");
+
         auto pick = [&](const auto& vec, size_t i, auto fallback) {
             if (vec.empty()) return fallback;
-            // Singleton broadcasts to all panels; partial-length arrays
-            // wrap (caller should pass length 1 or length names.size()).
-            const size_t idx = (vec.size() == 1) ? 0 : (i % vec.size());
+            // Length is validated above to be 1 or names.size(); index 0 for
+            // the single-value broadcast, else one-per-panel.
+            const size_t idx = (vec.size() == 1) ? 0 : i;
             return static_cast<decltype(fallback)>(vec[idx]);
         };
+
+        // Panels are images; guard against absurd/negative dimensions that
+        // would wrap to a huge uint32 and blow up the buffer allocation.
+        constexpr int64_t kMaxPanelDim = 8192;
 
         std::vector<PinholeProcessor::PanelConfig> out;
         out.reserve(names.size());
@@ -160,9 +193,46 @@ class OusterPinhole : public OusterProcessingNodeBase {
             cfg.yaw_rad = yaws[i] * M_PI / 180.0;
             cfg.pitch_rad = pick(pitches, i, 0.0) * M_PI / 180.0;
             cfg.hfov_rad = pick(hfovs, i, 90.0) * M_PI / 180.0;
-            cfg.width = static_cast<uint32_t>(pick(widths, i, int64_t{256}));
-            cfg.height = static_cast<uint32_t>(pick(heights, i, int64_t{0}));
-            cfg.vfov_rad = pick(vfovs, i, 0.0) * M_PI / 180.0;
+            // A pinhole model diverges as HFOV -> 180 deg (fx -> 0/inf); reject
+            // out-of-range values instead of building a garbage LUT.
+            if (cfg.hfov_rad <= 0.0 || cfg.hfov_rad >= M_PI) {
+                RCLCPP_FATAL(get_logger(),
+                    "OusterPinhole: panel '%s' hfov (%.3f deg) must be in "
+                    "the open interval (0, 180).",
+                    cfg.name.c_str(), cfg.hfov_rad * 180.0 / M_PI);
+                throw std::runtime_error("panel hfov out of range");
+            }
+            const int64_t width_i = pick(widths, i, int64_t{256});
+            if (width_i <= 0 || width_i > kMaxPanelDim) {
+                RCLCPP_FATAL(get_logger(),
+                    "OusterPinhole: panel '%s' width (%ld) must be in [1, %ld].",
+                    cfg.name.c_str(), static_cast<long>(width_i),
+                    static_cast<long>(kMaxPanelDim));
+                throw std::runtime_error("panel width out of range");
+            }
+            // height == 0 is the sentinel for "auto-fit from the lidar VFOV".
+            const int64_t height_i = pick(heights, i, int64_t{0});
+            if (height_i < 0 || height_i > kMaxPanelDim) {
+                RCLCPP_FATAL(get_logger(),
+                    "OusterPinhole: panel '%s' height (%ld) must be in "
+                    "[0, %ld] (0 = auto-fit).",
+                    cfg.name.c_str(), static_cast<long>(height_i),
+                    static_cast<long>(kMaxPanelDim));
+                throw std::runtime_error("panel height out of range");
+            }
+            // vfov == 0 means "derive from the lidar"; a set override must be
+            // a valid pinhole vertical FOV.
+            const double vfov_deg = pick(vfovs, i, 0.0);
+            if (vfov_deg < 0.0 || vfov_deg >= 180.0) {
+                RCLCPP_FATAL(get_logger(),
+                    "OusterPinhole: panel '%s' vfov (%.3f deg) must be in "
+                    "[0, 180) (0 = auto).",
+                    cfg.name.c_str(), vfov_deg);
+                throw std::runtime_error("panel vfov out of range");
+            }
+            cfg.width = static_cast<uint32_t>(width_i);
+            cfg.height = static_cast<uint32_t>(height_i);
+            cfg.vfov_rad = vfov_deg * M_PI / 180.0;
             out.push_back(cfg);
         }
         return out;
@@ -216,6 +286,10 @@ class OusterPinhole : public OusterProcessingNodeBase {
         // PinholeProcessor::create returns just the lambda. Re-build a
         // separate helper instance just to reach the panel list, OR
         // build publishers from panel_configs directly + the channel set.
+        // metadata may be re-delivered (transient-local topic, sensor
+        // reconfig); rebuild the publisher list from scratch each time so we
+        // don't accumulate stale publishers or index past the current panels.
+        panel_pubs_.clear();
         const auto channel_topics = pinhole_channel_topics(info.num_returns());
         for (const auto& cfg : panel_configs) {
             PanelPublishers pp;
@@ -235,15 +309,26 @@ class OusterPinhole : public OusterProcessingNodeBase {
             panel_pubs_.push_back(std::move(pp));
         }
 
+        // The pinhole panels only sample range/signal/reflec/nearir, never
+        // color, so skip the RGB auto-exposure path entirely.
         lidar_packet_handler_ = LidarPacketHandler::create(
             info, processors, timestamp_mode,
             static_cast<int64_t>(ptp_utc_tai_offset * 1e+9),
-            static_cast<float>(min_ratio));
+            static_cast<float>(min_ratio), /*process_rgb=*/false);
 
         lidar_packet_sub_ = create_subscription<PacketMsg>(
             "lidar_packets", selected_qos,
             [this](const PacketMsg::ConstSharedPtr msg) {
                 if (!lidar_packet_handler_) return;
+                // Reject undersized buffers before the fixed-offset SDK parse
+                // to avoid an out-of-bounds read.
+                if (!packet_format ||
+                    msg->buf.size() < packet_format->lidar_packet_size) {
+                    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1,
+                        "dropping undersized lidar_packets msg ("
+                        << msg->buf.size() << " bytes)");
+                    return;
+                }
                 LidarPacket packet(msg->buf.size());
                 packet.format = packet_format;
                 packet.host_timestamp =

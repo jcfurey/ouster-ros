@@ -85,6 +85,19 @@ class OusterCloud : public OusterProcessingNodeBase {
     }
 
     void create_publishers_subscriptions(const ouster::sdk::core::SensorInfo& info) {
+        // Metadata can be re-delivered (latched topic, sensor reactivation).
+        // Tear down the previous state before rebuilding, in order: drop the
+        // subscriptions first so no new packets are enqueued, then destroy the
+        // handlers — the LidarPacketHandler destructor joins its background
+        // processing thread, which publishes into lidar_pubs/scan_pubs, so it
+        // must finish before we clear/resize those vectors.
+        lidar_packet_sub.reset();
+        imu_packet_sub.reset();
+        lidar_packet_handler = nullptr;
+        imu_packet_handler = nullptr;
+        lidar_pubs.clear();
+        scan_pubs.clear();
+
         auto timestamp_mode = get_parameter("timestamp_mode").as_string();
         auto ptp_utc_tai_offset =
             get_parameter("ptp_utc_tai_offset").as_double();
@@ -109,6 +122,13 @@ class OusterCloud : public OusterProcessingNodeBase {
                 "imu_packets", selected_qos,
                 [this](const PacketMsg::ConstSharedPtr msg) {
                     if (imu_packet_handler) {
+                        if (!packet_format ||
+                            msg->buf.size() < packet_format->imu_packet_size) {
+                            RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1,
+                                "dropping undersized imu_packets msg ("
+                                << msg->buf.size() << " bytes)");
+                            return;
+                        }
                         // TODO[UN]: this is not ideal since we can't reuse the msg buffer
                         // Need to redefine the Packet object and allow use of array_views
                         ImuPacket imu_packet(msg->buf.size());
@@ -132,6 +152,9 @@ class OusterCloud : public OusterProcessingNodeBase {
         int num_returns = info.num_returns();
 
         std::vector<LidarScanProcessor> processors;
+        // Only run the packet handler's RGB auto-exposure when a color point
+        // type is actually requested (set inside the PCL block below).
+        bool needs_rgb = false;
 
         if (impl::check_token(tokens, "PCL")) {
             lidar_pubs.resize(num_returns);
@@ -141,6 +164,8 @@ class OusterCloud : public OusterProcessingNodeBase {
             }
 
             auto point_type = get_parameter("point_type").as_string();
+            needs_rgb =
+                PointCloudProcessorFactory::point_type_produces_color(point_type);
             auto organized = get_parameter("organized").as_bool();
             auto destagger = get_parameter("destagger").as_bool();
             auto min_range_m = get_parameter("min_range").as_double();
@@ -218,7 +243,7 @@ class OusterCloud : public OusterProcessingNodeBase {
             lidar_packet_handler = LidarPacketHandler::create(
                 info, processors, timestamp_mode,
                 static_cast<int64_t>(ptp_utc_tai_offset * 1e+9),
-                min_scan_valid_columns_ratio);
+                min_scan_valid_columns_ratio, needs_rgb);
         }
 
         if (impl::check_token(tokens, "TLM")) {
@@ -236,6 +261,16 @@ class OusterCloud : public OusterProcessingNodeBase {
             lidar_packet_sub = create_subscription<PacketMsg>(
                 "lidar_packets", selected_qos,
                 [this](const PacketMsg::ConstSharedPtr msg) {
+                    // Reject undersized buffers: the SDK parser reads header
+                    // fields at fixed offsets up to lidar_packet_size, so a
+                    // short (or empty) message would read out of bounds.
+                    if (!packet_format ||
+                        msg->buf.size() < packet_format->lidar_packet_size) {
+                        RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1,
+                            "dropping undersized lidar_packets msg (" << msg->buf.size()
+                            << " bytes)");
+                        return;
+                    }
                     // TODO[UN]: this is not ideal since we can't reuse the msg buffer
                     // Need to redefine the Packet object and allow use of array_views
                     LidarPacket lidar_packet(msg->buf.size());

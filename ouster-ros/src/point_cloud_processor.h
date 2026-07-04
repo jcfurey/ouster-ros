@@ -69,9 +69,13 @@ class PointCloudProcessor {
         lut_offset = xyz_lut.offset.cast<float>();
         points = ouster::sdk::core::PointCloudXYZf(lut_direction.rows(), lut_offset.cols());
 
+        // The mask is multiplied against the full-resolution RANGE field in
+        // process() (the rows_step subsampling happens downstream), so it must
+        // be built at full pixels_per_column; dividing by rows_step here yields
+        // a dimension mismatch / out-of-bounds read whenever v_reduction > 1.
         mask = impl::load_mask<uint32_t>(
                     mask_path,
-                    info.format.pixels_per_column / rows_step,
+                    info.format.pixels_per_column,
                     info.format.columns_per_frame);
     }
 

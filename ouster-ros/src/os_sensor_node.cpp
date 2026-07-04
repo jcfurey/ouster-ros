@@ -44,8 +44,16 @@ OusterSensor::OusterSensor(const std::string& name,
     declare_parameters();
     staged_config = parse_config_from_ros_parameters();
     attempt_reconnect = get_parameter("attempt_reconnect").as_bool();
-    dormant_period_between_reconnects = 
+    dormant_period_between_reconnects =
         get_parameter("dormant_period_between_reconnects").as_double();
+    // Used directly as a wall-timer period; a zero/negative value would spin
+    // or be rejected by rclcpp, so enforce a sane lower bound.
+    if (dormant_period_between_reconnects <= 0.0) {
+        RCLCPP_WARN(get_logger(),
+            "dormant_period_between_reconnects (%f) must be > 0; clamping to 1.0s",
+            dormant_period_between_reconnects);
+        dormant_period_between_reconnects = 1.0;
+    }
     reconnect_attempts_available =
         get_parameter("max_failed_reconnect_attempts").as_int();
 
@@ -637,14 +645,17 @@ void OusterSensor::parse_lidar_mode(SensorConfig& config) {
         return;
     }
 
-    try {
-        auto lidar_mode = ouster::sdk::core::lidar_mode_of_string(lidar_mode_arg);
-        config.lidar_mode = lidar_mode;
-    } catch (const std::exception& e) {
-        auto error_msg = "Invalid lidar mode: " + lidar_mode_arg + ", exception details: " + e.what();
+    // lidar_mode_of_string returns an empty optional on an unrecognized
+    // string (it catches std::invalid_argument internally and never throws),
+    // so check the optional explicitly instead of relying on a catch that
+    // would never fire.
+    auto lidar_mode = ouster::sdk::core::lidar_mode_of_string(lidar_mode_arg);
+    if (!lidar_mode) {
+        auto error_msg = "Invalid lidar mode: " + lidar_mode_arg;
         RCLCPP_FATAL_STREAM(get_logger(), error_msg);
         throw std::runtime_error(error_msg);
     }
+    config.lidar_mode = lidar_mode;
 }
 
 void OusterSensor::parse_timestamp_mode(SensorConfig& config) {
@@ -1003,6 +1014,13 @@ void OusterSensor::populate_metadata_defaults(
                     "Firmware < %s not supported; output may not be reliable",
                     ouster::sdk::sensor::MIN_VERSION.simple_version_string().c_str());
 
+    if (!info.config.lidar_mode) {
+        RCLCPP_WARN(
+            get_logger(),
+            "Lidar mode not found in metadata; output may not be reliable");
+        info.config.lidar_mode = ouster::sdk::core::LidarMode(0, 0);
+    }
+
     if (!info.prod_line.size()) info.prod_line = "UNKNOWN";
 
     if (info.beam_azimuth_angles.empty() || info.beam_altitude_angles.empty()) {
@@ -1134,6 +1152,10 @@ void OusterSensor::cleanup() {
     get_metadata_srv.reset();
     get_config_srv.reset();
     set_config_srv.reset();
+    // Tear these down symmetrically too, so a reset/reconfigure cycle doesn't
+    // recreate them while the previous instance is still registered.
+    reset_srv.reset();
+    metadata_pub.reset();
     sensor_connection_thread.reset();
 }
 

@@ -28,7 +28,12 @@
 #else
 #include <tf2/LinearMath/Quaternion.h>
 #endif
+#if __has_include(<tf2_ros/static_transform_broadcaster.hpp>)
+#include <tf2_ros/static_transform_broadcaster.hpp>
+#else
 #include <tf2_ros/static_transform_broadcaster.h>
+#endif
+#include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include "lidar_packet_handler.h"
 #include "image_processor.h"
@@ -58,7 +63,13 @@ class OusterImage : public OusterProcessingNodeBase {
         declare_parameter("distortion_model", "plumb_bob");
         declare_parameter("frame_id", "os_lidar");
         declare_parameter("optical_frame", "");
-        declare_parameter("publish_camera_info", true);
+        // Off by default: the os_image range/signal/etc. images are a full
+        // 360-deg equirectangular panorama, which cannot be described by a
+        // pinhole (plumb_bob) CameraInfo. Publishing one invites downstream
+        // rectification/back-projection that silently mis-projects every
+        // off-center column. Opt in only for display overlay; use the
+        // os_pinhole node for a true pinhole camera + CameraInfo.
+        declare_parameter("publish_camera_info", false);
         create_metadata_subscriber(
             [this](const auto& msg) { metadata_handler(msg); });
         RCLCPP_INFO(get_logger(), "OusterImage: node initialized!");
@@ -88,15 +99,14 @@ class OusterImage : public OusterProcessingNodeBase {
         auto selected_qos =
             use_system_default_qos ? system_default_qos : sensor_data_qos;
 
-        const std::map<std::string, std::string>
+        std::map<std::string, std::string>
             channel_field_topic_map_1 {
                 {ChanField::RANGE, "range_image"},
                 {ChanField::SIGNAL, "signal_image"},
                 {ChanField::REFLECTIVITY, "reflec_image"},
-                {ChanField::NEAR_IR, "nearir_image"},
-                {ChanField::RGB, "rgb_image"}};
+                {ChanField::NEAR_IR, "nearir_image"}};
 
-        const std::map<std::string, std::string>
+        std::map<std::string, std::string>
             channel_field_topic_map_2 {
                 {ChanField::RANGE, "range_image"},
                 {ChanField::SIGNAL, "signal_image"},
@@ -104,11 +114,27 @@ class OusterImage : public OusterProcessingNodeBase {
                 {ChanField::NEAR_IR, "nearir_image"},
                 {ChanField::RANGE2, "range_image2"},
                 {ChanField::SIGNAL2, "signal_image2"},
-                {ChanField::REFLECTIVITY2, "reflec_image2"},
-                {ChanField::RGB, "rgb_image"}};
+                {ChanField::REFLECTIVITY2, "reflec_image2"}};
+
+        // Only advertise rgb_image for RGB-capable profiles. ImageProcessor
+        // produces a ChanField::RGB image only for these, so advertising the
+        // topic otherwise leaves a publisher that never publishes (a
+        // subscriber would block forever with no diagnostic).
+        const bool has_rgb =
+            info.format.udp_profile_lidar ==
+                ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16 ||
+            info.format.udp_profile_lidar ==
+                ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16_DUAL;
+        if (has_rgb) {
+            channel_field_topic_map_1[ChanField::RGB] = "rgb_image";
+            channel_field_topic_map_2[ChanField::RGB] = "rgb_image";
+        }
 
         auto which_map = n_returns == 1 ? &channel_field_topic_map_1
                                         : &channel_field_topic_map_2;
+        // Clear publishers from any previous metadata delivery so a changed
+        // return-count/profile doesn't leave stale RANGE2/RGB publishers.
+        image_pubs.clear();
         for (auto it = which_map->begin(); it != which_map->end(); ++it) {
             image_pubs[it->first] =
                 create_publisher<sensor_msgs::msg::Image>(it->second,
@@ -154,14 +180,25 @@ class OusterImage : public OusterProcessingNodeBase {
                 })
         };
 
+        // os_image consumes color only when it publishes rgb_image, i.e. on
+        // RGB-capable profiles (has_rgb, computed above).
         lidar_packet_handler = LidarPacketHandler::create(
             info, processors, timestamp_mode,
             static_cast<int64_t>(ptp_utc_tai_offset * 1e+9),
-            min_scan_valid_columns_ratio);
+            min_scan_valid_columns_ratio, /*process_rgb=*/has_rgb);
         lidar_packet_sub = create_subscription<PacketMsg>(
                 "lidar_packets", selected_qos,
                 [this](const PacketMsg::ConstSharedPtr msg) {
                     if (lidar_packet_handler) {
+                        // Reject undersized buffers before the fixed-offset
+                        // SDK parse to avoid an out-of-bounds read.
+                        if (!packet_format ||
+                            msg->buf.size() < packet_format->lidar_packet_size) {
+                            RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(),
+                                1, "dropping undersized lidar_packets msg ("
+                                << msg->buf.size() << " bytes)");
+                            return;
+                        }
                         // TODO[UN]: this is not ideal since we can't reuse the msg buffer
                         // Need to redefine the Packet object and allow use of array_views
                         LidarPacket lidar_packet(msg->buf.size());
@@ -220,6 +257,13 @@ class OusterImage : public OusterProcessingNodeBase {
         const ouster::sdk::core::SensorInfo& sensor_info,
         const std::string& frame_id,
         const rclcpp::QoS& qos) {
+        RCLCPP_WARN(get_logger(),
+            "os_image CameraInfo describes an equirectangular (panoramic) "
+            "projection, not a real pinhole camera; the advertised "
+            "distortion_model does not apply. It is intended for display "
+            "overlay only and must NOT be used for pinhole "
+            "rectification/back-projection. Use the os_pinhole node for a "
+            "true pinhole camera + CameraInfo.");
         uint32_t H = sensor_info.format.pixels_per_column;
         uint32_t W = sensor_info.format.columns_per_frame;
 

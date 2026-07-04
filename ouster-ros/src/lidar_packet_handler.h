@@ -26,10 +26,9 @@
 #include <atomic>
 #include <vector>
 #include <string>
+#include <cstring>
 
 #include <ouster/image_processing.h>
-
-namespace ChanField = ouster::sdk::core::ChanField;
 
 namespace {
 
@@ -44,23 +43,28 @@ int find_if_reverse(const Eigen::Array<T, -1, 1>& array,
 }
 
 uint64_t linear_interpolate(int x0, uint64_t y0, int x1, uint64_t y1, int x) {
-    uint64_t min_v, max_v;
-    double sign;
-    if (y1 > y0) {
-        min_v = y0;
-        max_v = y1;
-        sign = +1;
-    } else {
-        min_v = y1;
-        max_v = y0;
-        sign = -1;
-    }
-    return y0 + (x - x0) * sign * (max_v - min_v) / (x1 - x0);
+    // Integer interpolation to preserve full uint64 precision: PTP/TAI
+    // timestamps exceed the 2^53 exact-integer range of double, so the old
+    // double arithmetic quantized results by hundreds of ns. __int128 holds
+    // the intermediate product without overflow and carries the sign of
+    // (y1 - y0) naturally.
+    const long long span = static_cast<long long>(x1) - static_cast<long long>(x0);
+    if (span == 0) return y0;
+    const long long dx = static_cast<long long>(x) - static_cast<long long>(x0);
+    const __int128 dy = static_cast<__int128>(y1) - static_cast<__int128>(y0);
+    return static_cast<uint64_t>(static_cast<__int128>(y0) + dy * dx / span);
 }
 
 // Fast float16 -> float32 conversion for normal-range values.
 inline float f16_bits_to_f32(uint16_t bits) {
-    if (bits == 0) return 0.0f;
+    // Colors are non-negative; a sign-set encoding is out of range and would
+    // otherwise be decoded as a large positive value that skews auto-exposure.
+    if (bits & 0x8000u) return 0.0f;
+    const uint16_t exponent = bits & 0x7C00u;
+    // Zero or subnormal (magnitude < 2^-14, negligible for color) -> 0.
+    if (exponent == 0) return 0.0f;
+    // Inf / NaN -> 0 so out-of-range encodings can't poison auto-exposure.
+    if (exponent == 0x7C00u) return 0.0f;
     const uint32_t expanded = static_cast<uint32_t>(bits + 0x1C000u) << 13;
     float result;
     std::memcpy(&result, &expanded, sizeof(float));
@@ -76,6 +80,8 @@ inline uint8_t f32_to_u8(float v) {
 }  // namespace
 
 namespace ouster_ros {
+
+namespace ChanField = ouster::sdk::core::ChanField;
 
 using LidarScanProcessor =
     std::function<void(const ouster::sdk::core::LidarScan&, uint64_t, const rclcpp::Time&)>;
@@ -94,7 +100,8 @@ class LidarPacketHandler {
                        const std::vector<LidarScanProcessor>& handlers,
                        const std::string& timestamp_mode,
                        int64_t ptp_utc_tai_offset,
-                       float min_scan_valid_columns_ratio)
+                       float min_scan_valid_columns_ratio,
+                       bool process_rgb = true)
         : ring_buffer(LIDAR_SCAN_COUNT),
           lidar_scan_handlers{handlers},
           ptp_utc_tai_offset_(ptp_utc_tai_offset),
@@ -104,6 +111,8 @@ class LidarPacketHandler {
 
         lidar_scans.resize(LIDAR_SCAN_COUNT);
         mutexes.resize(LIDAR_SCAN_COUNT);
+        lidar_scan_estimated_ts_slots.resize(LIDAR_SCAN_COUNT, 0);
+        lidar_scan_estimated_msg_ts_slots.resize(LIDAR_SCAN_COUNT);
 
         for (size_t i = 0; i < lidar_scans.size(); ++i) {
             // NOTE: must construct with SensorInfo (not the
@@ -113,8 +122,16 @@ class LidarPacketHandler {
             mutexes[i] = std::make_unique<std::mutex>();
         }
 
-        if (info.format.udp_profile_lidar == ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16 ||
-            info.format.udp_profile_lidar == ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16_DUAL) {
+        // Only set up the RGB auto-exposure path when the profile carries
+        // color AND a downstream consumer actually reads it (process_rgb).
+        // Otherwise the per-scan float16->float->AE->uint8 work — and the
+        // added R_U8/G_U8/B_U8 fields — are pure overhead (e.g. an RGB sensor
+        // feeding a non-color point cloud, or the pinhole node which never
+        // samples color).
+        const bool profile_has_rgb =
+            info.format.udp_profile_lidar == ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16 ||
+            info.format.udp_profile_lidar == ouster::sdk::core::UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16_DUAL;
+        if (process_rgb && profile_has_rgb) {
             has_rgb_ = true;
             uint32_t H = info.format.pixels_per_column;
             uint32_t W = info.format.columns_per_frame;
@@ -139,7 +156,11 @@ class LidarPacketHandler {
         });
 
         // initalize time handlers
-        scan_col_ts_spacing_ns = compute_scan_col_ts_spacing_ns(info.config.lidar_mode.value());
+        // lidar_mode may be absent when it is missing from the sensor
+        // metadata (e.g. replay of a partial metadata JSON); fall back to an
+        // unspecified mode instead of throwing std::bad_optional_access.
+        scan_col_ts_spacing_ns = compute_scan_col_ts_spacing_ns(
+            info.config.lidar_mode.value_or(ouster::sdk::core::LidarMode(0, 0)));
         compute_scan_ts = [this](const auto& ts_v) {
             return compute_scan_ts_0(ts_v);
         };
@@ -187,6 +208,18 @@ class LidarPacketHandler {
                             result = false;
                         }
                     }
+                    if (result) {
+                        // Record this scan's estimated timestamp in its own
+                        // ring slot while still holding this slot's mutex, so
+                        // the consumer reads the timestamp of the scan it
+                        // actually processes rather than a shared member the
+                        // producer may have overwritten for a later scan.
+                        const size_t slot = ring_buffer.write_head();
+                        lidar_scan_estimated_ts_slots[slot] =
+                            lidar_scan_estimated_ts;
+                        lidar_scan_estimated_msg_ts_slots[slot] =
+                            lidar_scan_estimated_msg_ts;
+                    }
                 }
                 if (result) {
                     ring_buffer.write();
@@ -217,12 +250,16 @@ class LidarPacketHandler {
         const ouster::sdk::core::SensorInfo& info,
         const std::vector<LidarScanProcessor>& handlers,
         const std::string& timestamp_mode, int64_t ptp_utc_tai_offset,
-        float min_scan_valid_columns_ratio) {
+        float min_scan_valid_columns_ratio, bool process_rgb = true) {
         auto handler = std::make_shared<LidarPacketHandler>(
             info, handlers, timestamp_mode, ptp_utc_tai_offset,
-            min_scan_valid_columns_ratio);
+            min_scan_valid_columns_ratio, process_rgb);
         return [handler](const ouster::sdk::core::LidarPacket& lidar_packet) {
             if (handler->lidar_packet_accumlator(lidar_packet)) {
+                // Notify while holding ring_buffer_mutex so the wakeup cannot
+                // be lost between the consumer's empty-check and its wait
+                // registration in process_scans().
+                std::lock_guard<std::mutex> lk(handler->ring_buffer_mutex);
                 handler->ring_buffer_has_elements.notify_one();
             }
         };
@@ -284,8 +321,10 @@ class LidarPacketHandler {
             }
         }
 
+        const size_t read_slot = ring_buffer.read_head();
         for (auto h : lidar_scan_handlers) {
-            h(ls, lidar_scan_estimated_ts, lidar_scan_estimated_msg_ts);
+            h(ls, lidar_scan_estimated_ts_slots[read_slot],
+              lidar_scan_estimated_msg_ts_slots[read_slot]);
         }
 
         // when we hit percent amount of the ring_buffer capacity throttle
@@ -327,7 +366,13 @@ class LidarPacketHandler {
         const ouster::sdk::core::LidarScan::Header<uint64_t>& ts_v) {
         auto idx = std::find_if(ts_v.data(), ts_v.data() + ts_v.size(),
                                 [](uint64_t h) { return h != 0; });
-        assert(idx != ts_v.data() + ts_v.size());  // should never happen
+        if (idx == ts_v.data() + ts_v.size()) {
+            // No non-zero column timestamp (all-zero header on a fully invalid
+            // scan). Avoid the UB the release-stripped asserts miss
+            // (dereferencing end() / indexing -1); report a zero timestamp and
+            // stay on the first-scan path for the next scan.
+            return 0;
+        }
         int curr_scan_first_nonzero_idx = idx - ts_v.data();
         uint64_t curr_scan_first_nonzero_value = *idx;
 
@@ -337,10 +382,12 @@ class LidarPacketHandler {
                 : extrapolate_value(curr_scan_first_nonzero_idx,
                                     curr_scan_first_nonzero_value);
 
-        last_scan_last_nonzero_idx =
+        int last_nonzero =
             find_if_reverse(ts_v, [](uint64_t h) { return h != 0; });
-        assert(last_scan_last_nonzero_idx >= 0);  // should never happen
-        last_scan_last_nonzero_value = ts_v(last_scan_last_nonzero_idx);
+        if (last_nonzero >= 0) {
+            last_scan_last_nonzero_idx = last_nonzero;
+            last_scan_last_nonzero_value = ts_v(last_scan_last_nonzero_idx);
+        }
         compute_scan_ts = [this](const auto& ts_v) {
             return compute_scan_ts_n(ts_v);
         };
@@ -353,7 +400,11 @@ class LidarPacketHandler {
         const ouster::sdk::core::LidarScan::Header<uint64_t>& ts_v) {
         auto idx = std::find_if(ts_v.data(), ts_v.data() + ts_v.size(),
                                 [](uint64_t h) { return h != 0; });
-        assert(idx != ts_v.data() + ts_v.size());  // should never happen
+        if (idx == ts_v.data() + ts_v.size()) {
+            // All-zero timestamps: reuse the last known good scan timestamp
+            // rather than dereferencing end() / indexing -1.
+            return last_scan_last_nonzero_value;
+        }
         int curr_scan_first_nonzero_idx = idx - ts_v.data();
         uint64_t curr_scan_first_nonzero_value = *idx;
         uint64_t scan_ns = curr_scan_first_nonzero_idx == 0
@@ -363,10 +414,12 @@ class LidarPacketHandler {
                                               curr_scan_first_nonzero_idx,
                                               curr_scan_first_nonzero_value,
                                               static_cast<int>(ts_v.size()));
-        last_scan_last_nonzero_idx =
+        int last_nonzero =
             find_if_reverse(ts_v, [](uint64_t h) { return h != 0; });
-        assert(last_scan_last_nonzero_idx >= 0);  // should never happen
-        last_scan_last_nonzero_value = ts_v(last_scan_last_nonzero_idx);
+        if (last_nonzero >= 0) {
+            last_scan_last_nonzero_idx = last_nonzero;
+            last_scan_last_nonzero_value = ts_v(last_scan_last_nonzero_idx);
+        }
         return scan_ns;
     }
 
@@ -433,7 +486,14 @@ class LidarPacketHandler {
         const auto scan_width = ouster::sdk::core::n_cols_of_lidar_mode(ld_mode);
         const auto scan_frequency = ouster::sdk::core::frequency_of_lidar_mode(ld_mode);
         const double one_sec_in_ns = 1e+9;
-        return one_sec_in_ns / (scan_width * scan_frequency);
+        const double denom =
+            static_cast<double>(scan_width) * static_cast<double>(scan_frequency);
+        // scan_width/scan_frequency are 0 for the LidarMode(0,0) fallback used
+        // when metadata lacks lidar_mode; return 0 spacing (no per-column
+        // extrapolation) rather than an infinite value that poisons every
+        // downstream timestamp.
+        if (denom <= 0.0) return 0.0;
+        return one_sec_in_ns / denom;
     }
 
    private:
@@ -445,8 +505,18 @@ class LidarPacketHandler {
     std::vector<std::unique_ptr<ouster::sdk::core::LidarScan>> lidar_scans;
     std::vector<std::unique_ptr<std::mutex>> mutexes;
 
+    // Producer scratch (written by the lidar_handler_* under the write-head
+    // mutex, then copied into the per-slot vectors below before the ring
+    // buffer advances).
     uint64_t lidar_scan_estimated_ts;
     rclcpp::Time lidar_scan_estimated_msg_ts;
+
+    // Per ring-buffer-slot estimated timestamps. Each slot's value is written
+    // under mutexes[write_head] and read under mutexes[read_head] — i.e. the
+    // same per-slot mutex that guards that slot's LidarScan — so a scan always
+    // carries its own timestamp and there is no cross-thread data race.
+    std::vector<uint64_t> lidar_scan_estimated_ts_slots;
+    std::vector<rclcpp::Time> lidar_scan_estimated_msg_ts_slots;
 
     std::optional<rclcpp::Time> lidar_handler_ros_time_frame_ts;
 
