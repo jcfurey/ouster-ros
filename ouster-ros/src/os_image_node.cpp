@@ -72,6 +72,11 @@ class OusterImage : public OusterProcessingNodeBase {
         declare_parameter("publish_camera_info", false);
         create_metadata_subscriber(
             [this](const auto& msg) { metadata_handler(msg); });
+        // Also seed metadata from a file when the "metadata" param is set, so
+        // processing works for a plain `ros2 bag play` of recorded packets
+        // where the latched /metadata topic is not reliably re-delivered.
+        load_metadata_from_file(
+            [this](const auto& msg) { metadata_handler(msg); });
         RCLCPP_INFO(get_logger(), "OusterImage: node initialized!");
     }
 

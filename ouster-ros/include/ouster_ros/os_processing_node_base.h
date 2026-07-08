@@ -25,6 +25,16 @@ class OusterProcessingNodeBase : public rclcpp::Node {
         std::function<void(const std_msgs::msg::String::ConstSharedPtr&)>
             on_sensor_metadata);
 
+    // Reads the optional "metadata" file-path parameter; when it is set, loads
+    // the file and invokes on_sensor_metadata with its contents. This lets the
+    // processing nodes obtain sensor metadata without the latched /metadata
+    // topic (e.g. a plain `ros2 bag play` of recorded packets, where the
+    // transient-local topic is not reliably re-delivered). Returns true if
+    // metadata was loaded from a file.
+    bool load_metadata_from_file(
+        const std::function<void(const std_msgs::msg::String::ConstSharedPtr&)>&
+            on_sensor_metadata);
+
    protected:
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr metadata_sub;
     ouster::sdk::core::SensorInfo info;

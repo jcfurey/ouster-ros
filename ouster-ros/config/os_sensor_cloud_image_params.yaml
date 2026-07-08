@@ -45,9 +45,14 @@ ouster/os_cloud:
     scan_ring: 0  # Use this parameter in conjunction with the SCAN flag and choose a
                   # value the range [0, sensor_beams_count)
     point_type: original # choose from: {original, native, xyz, xyzi, o_xyzi, xyzir, xyzrgb, xyzrgba, color_point}
+    metadata: '' # optional path to a sensor metadata .json. When set, the node
+                 # loads metadata from this file instead of waiting for the
+                 # latched /metadata topic — useful for `ros2 bag play` of
+                 # recorded packets, where that topic is not reliably delivered.
 ouster/os_image:
   ros__parameters:
     use_system_default_qos: false # needs to match the value defined for os_sensor node
+    metadata: '' # optional path to a sensor metadata .json (see os_cloud/metadata)
     publish_camera_info: false # publish sensor_msgs/CameraInfo on os_image/camera_info.
                       # NOTE: the os_image panorama is equirectangular, not a
                       # pinhole camera, so this CameraInfo is a display-only
