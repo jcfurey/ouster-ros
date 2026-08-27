@@ -72,3 +72,35 @@ TEST_F(PointCloudComposeTest, MapLidarScanFields) {
         EXPECT_EQ(point::get<8>(pt), near_ir(0, src_idx));
     }
 }
+
+TEST_F(PointCloudComposeTest, MapsPre32SingleReturnWithoutWindow) {
+    const auto WIDTH = 5U;
+    const auto HEIGHT = 3U;
+    LidarScan ls(WIDTH, HEIGHT,
+                 UDPProfileLidar::RNG19_RFL8_SIG16_NIR16);
+    ASSERT_TRUE(ls.has_field(ChanField::WINDOW));
+    ls.del_field(ChanField::WINDOW);
+
+    auto range = ls.field<uint32_t>(ChanField::RANGE);
+    auto signal = ls.field<uint16_t>(ChanField::SIGNAL);
+    auto reflectivity = ls.field<uint8_t>(ChanField::REFLECTIVITY);
+    auto flags = ls.field<uint8_t>(ChanField::FLAGS);
+    auto near_ir = ls.field<uint16_t>(ChanField::NEAR_IR);
+    range(0, 0) = 10U;
+    signal(0, 0) = 20U;
+    reflectivity(0, 0) = 30U;
+    flags(0, 0) = 40U;
+    near_ir(0, 0) = 50U;
+
+    const auto fields = make_lidar_scan_tuple<
+        0, Profile_RNG19_RFL8_SIG16_NIR16_WITHOUT_WINDOW.size(),
+        Profile_RNG19_RFL8_SIG16_NIR16_WITHOUT_WINDOW>(ls);
+    Point_RNG19_RFL8_SIG16_NIR16 point;
+    EXPECT_NO_THROW(copy_lidar_scan_fields_to_point<0>(point, fields, 0));
+    EXPECT_EQ(point.range, 10U);
+    EXPECT_EQ(point.signal, 20U);
+    EXPECT_EQ(point.reflectivity, 30U);
+    EXPECT_EQ(point.flags, 40U);
+    EXPECT_EQ(point.near_ir, 50U);
+    EXPECT_EQ(point.window, 0U);
+}

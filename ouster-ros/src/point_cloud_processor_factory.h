@@ -36,17 +36,33 @@ class PointCloudProcessorFactory {
 
                     Point_RNG19_RFL8_SIG16_NIR16_DUAL staging_pt;
                     if (return_index == 0) {
-                        scan_to_cloud_f<
-                            Profile_RNG19_RFL8_SIG16_NIR16_DUAL.size(),
-                            Profile_RNG19_RFL8_SIG16_NIR16_DUAL>(
-                            cloud, staging_pt, points, scan_ts, ls,
-                            pixel_shift_by_row, organized, destagger, rows_step);
+                        if (ls.has_field(ChanField::WINDOW)) {
+                            scan_to_cloud_f<
+                                Profile_RNG19_RFL8_SIG16_NIR16_DUAL.size(),
+                                Profile_RNG19_RFL8_SIG16_NIR16_DUAL>(
+                                cloud, staging_pt, points, scan_ts, ls,
+                                pixel_shift_by_row, organized, destagger, rows_step);
+                        } else {
+                            scan_to_cloud_f<
+                                Profile_RNG19_RFL8_SIG16_NIR16_DUAL_WITHOUT_WINDOW.size(),
+                                Profile_RNG19_RFL8_SIG16_NIR16_DUAL_WITHOUT_WINDOW>(
+                                cloud, staging_pt, points, scan_ts, ls,
+                                pixel_shift_by_row, organized, destagger, rows_step);
+                        }
                     } else {
-                        scan_to_cloud_f<
-                            Profile_RNG19_RFL8_SIG16_NIR16_DUAL_2ND_RETURN.size(),
-                            Profile_RNG19_RFL8_SIG16_NIR16_DUAL_2ND_RETURN>(
-                            cloud, staging_pt, points, scan_ts, ls,
-                            pixel_shift_by_row, organized, destagger, rows_step);
+                        if (ls.has_field(ChanField::WINDOW)) {
+                            scan_to_cloud_f<
+                                Profile_RNG19_RFL8_SIG16_NIR16_DUAL_2ND_RETURN.size(),
+                                Profile_RNG19_RFL8_SIG16_NIR16_DUAL_2ND_RETURN>(
+                                cloud, staging_pt, points, scan_ts, ls,
+                                pixel_shift_by_row, organized, destagger, rows_step);
+                        } else {
+                            scan_to_cloud_f<
+                                Profile_RNG19_RFL8_SIG16_NIR16_DUAL_2ND_RETURN_WITHOUT_WINDOW.size(),
+                                Profile_RNG19_RFL8_SIG16_NIR16_DUAL_2ND_RETURN_WITHOUT_WINDOW>(
+                                cloud, staging_pt, points, scan_ts, ls,
+                                pixel_shift_by_row, organized, destagger, rows_step);
+                        }
                     }
                 };
 
@@ -59,11 +75,19 @@ class PointCloudProcessorFactory {
                     int /*return_index*/) {
 
                     Point_RNG19_RFL8_SIG16_NIR16 staging_pt;
-                    scan_to_cloud_f<
-                        Profile_RNG19_RFL8_SIG16_NIR16.size(),
-                        Profile_RNG19_RFL8_SIG16_NIR16>(
-                            cloud, staging_pt, points, scan_ts, ls,
-                            pixel_shift_by_row, organized, destagger, rows_step);
+                    if (ls.has_field(ChanField::WINDOW)) {
+                        scan_to_cloud_f<
+                            Profile_RNG19_RFL8_SIG16_NIR16.size(),
+                            Profile_RNG19_RFL8_SIG16_NIR16>(
+                                cloud, staging_pt, points, scan_ts, ls,
+                                pixel_shift_by_row, organized, destagger, rows_step);
+                    } else {
+                        scan_to_cloud_f<
+                            Profile_RNG19_RFL8_SIG16_NIR16_WITHOUT_WINDOW.size(),
+                            Profile_RNG19_RFL8_SIG16_NIR16_WITHOUT_WINDOW>(
+                                cloud, staging_pt, points, scan_ts, ls,
+                                pixel_shift_by_row, organized, destagger, rows_step);
+                    }
                 };
 
             case UDPProfileLidar::RNG15_RFL8_NIR8:

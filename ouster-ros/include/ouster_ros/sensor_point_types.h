@@ -128,6 +128,18 @@ static constexpr ChanFieldTable<6> Profile_RNG19_RFL8_SIG16_NIR16_DUAL {{
     {ChanField::WINDOW, ChanFieldType::UINT8},
 }};
 
+// Firmware older than 3.2 uses the same UDP profile without WINDOW. The SDK
+// deliberately omits that field from LidarScan for those sensors, so keep a
+// matching table while retaining the modern point type's zero-filled member.
+static constexpr ChanFieldTable<5>
+    Profile_RNG19_RFL8_SIG16_NIR16_DUAL_WITHOUT_WINDOW {{
+        {ChanField::RANGE, ChanFieldType::UINT32},
+        {ChanField::SIGNAL, ChanFieldType::UINT16},
+        {ChanField::REFLECTIVITY, ChanFieldType::UINT8},
+        {ChanField::NEAR_IR, ChanFieldType::UINT16},
+        {ChanField::FLAGS, ChanFieldType::UINT8},
+    }};
+
 // Note: this is one way to implement the processing of 2nd return
 // This should be an exact copy of Profile_RNG19_RFL8_SIG16_NIR16_DUAL with the
 // exception of ChanField values for the first three fields. NEAR_IR is same for both
@@ -139,6 +151,15 @@ static constexpr ChanFieldTable<6> Profile_RNG19_RFL8_SIG16_NIR16_DUAL_2ND_RETUR
     {ChanField::FLAGS2, ChanFieldType::UINT8},
     {ChanField::WINDOW, ChanFieldType::UINT8},
 }};
+
+static constexpr ChanFieldTable<5>
+    Profile_RNG19_RFL8_SIG16_NIR16_DUAL_2ND_RETURN_WITHOUT_WINDOW {{
+        {ChanField::RANGE2, ChanFieldType::UINT32},
+        {ChanField::SIGNAL2, ChanFieldType::UINT16},
+        {ChanField::REFLECTIVITY2, ChanFieldType::UINT8},
+        {ChanField::NEAR_IR, ChanFieldType::UINT16},
+        {ChanField::FLAGS2, ChanFieldType::UINT8},
+    }};
 
 // auto=RNG19_RFL8_SIG16_NIR16_DUAL
 struct EIGEN_ALIGN16 _Point_RNG19_RFL8_SIG16_NIR16_DUAL {
@@ -219,6 +240,15 @@ static constexpr ChanFieldTable<6> Profile_RNG19_RFL8_SIG16_NIR16{{
     {ChanField::NEAR_IR, ChanFieldType::UINT16},
     {ChanField::WINDOW, ChanFieldType::UINT8},
 }};
+
+static constexpr ChanFieldTable<5>
+    Profile_RNG19_RFL8_SIG16_NIR16_WITHOUT_WINDOW {{
+        {ChanField::RANGE, ChanFieldType::UINT32},
+        {ChanField::SIGNAL, ChanFieldType::UINT16},
+        {ChanField::REFLECTIVITY, ChanFieldType::UINT8},
+        {ChanField::FLAGS, ChanFieldType::UINT8},
+        {ChanField::NEAR_IR, ChanFieldType::UINT16},
+    }};
 
 // auto=RNG19_RFL8_SIG16_NIR16
 struct EIGEN_ALIGN16 _Point_RNG19_RFL8_SIG16_NIR16 {
