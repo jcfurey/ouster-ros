@@ -17,8 +17,8 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <rclcpp/rclcpp.hpp>
 
+#include "frame_timestamp_tracker.h"
 #include "lock_free_ring_buffer.h"
-#include <optional>
 #include <chrono>
 #include <mutex>
 #include <condition_variable>
@@ -419,18 +419,31 @@ class LidarPacketHandler {
                                 ouster::sdk::core::LidarScan& lidar_scan) {
         auto packet_receive_time = rclcpp::Time(lidar_packet.host_timestamp);
 
-        if (!lidar_handler_ros_time_frame_ts) {
-            lidar_handler_ros_time_frame_ts = extrapolate_frame_ts(
-                pf, lidar_packet.buf.data(),
-                packet_receive_time);  // first point cloud time
+        const auto packet_frame_id = pf.frame_id(lidar_packet.buf.data());
+        if (!lidar_handler_ros_time_frame_timestamps.contains(
+                packet_frame_id)) {
+            const auto packet_frame_ts = extrapolate_frame_ts(
+                pf, lidar_packet.buf.data(), packet_receive_time);
+            lidar_handler_ros_time_frame_timestamps.observe(
+                packet_frame_id, packet_frame_ts.nanoseconds());
         }
 
         if (!(*scan_batcher)(lidar_packet, lidar_scan)) return false;
         lidar_scan_estimated_ts = compute_scan_ts(lidar_scan.timestamp());
-        lidar_scan_estimated_msg_ts = lidar_handler_ros_time_frame_ts.value();
-        // set time for next point cloud msg
-        lidar_handler_ros_time_frame_ts = extrapolate_frame_ts(
-            pf, lidar_packet.buf.data(), packet_receive_time);
+        const auto completed_frame_ts =
+            lidar_handler_ros_time_frame_timestamps.take(
+                static_cast<uint32_t>(lidar_scan.frame_id));
+        if (completed_frame_ts) {
+            lidar_scan_estimated_msg_ts = rclcpp::Time(*completed_frame_ts);
+        } else {
+            RCLCPP_WARN_STREAM(
+                rclcpp::get_logger(getName()),
+                "No reception timestamp found for completed lidar frame "
+                    << lidar_scan.frame_id
+                    << "; using the current packet estimate");
+            lidar_scan_estimated_msg_ts = extrapolate_frame_ts(
+                pf, lidar_packet.buf.data(), packet_receive_time);
+        }
         return true;
     }
 
@@ -453,7 +466,7 @@ class LidarPacketHandler {
     uint64_t lidar_scan_estimated_ts;
     rclcpp::Time lidar_scan_estimated_msg_ts;
 
-    std::optional<rclcpp::Time> lidar_handler_ros_time_frame_ts;
+    impl::FrameTimestampTracker lidar_handler_ros_time_frame_timestamps;
 
     int last_scan_last_nonzero_idx = -1;
     uint64_t last_scan_last_nonzero_value = 0;

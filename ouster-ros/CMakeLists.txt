@@ -289,6 +289,7 @@ if(BUILD_TESTING)
   ament_add_gtest(${PROJECT_NAME}_test
     test/test_main.cpp
     test/lock_free_ring_buffer_test.cpp
+    test/frame_timestamp_tracker_test.cpp
     test/point_accessor_test.cpp
     test/point_transform_test.cpp
     test/point_cloud_compose_test.cpp
@@ -299,6 +300,7 @@ if(BUILD_TESTING)
   if(TARGET ${PROJECT_NAME}_test)
     target_include_directories(${PROJECT_NAME}_test PRIVATE
       ${_ouster_ros_INCLUDE_DIRS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     )
     target_compile_definitions(${PROJECT_NAME}_test PRIVATE
