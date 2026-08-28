@@ -232,6 +232,18 @@ ros2 launch ouster_ros replay.launch.xml    \
     metadata:=<json file name>              # optional if bag file has /metadata topic
 ```
 
+Bag replay publishes `/clock` at 1 kHz and decoded point-cloud/IMU messages use
+that ROS-time epoch by default. The faster clock avoids repeated timestamps
+when packet rates exceed rosbag2's 40 Hz clock default. Select a sensor
+timestamp mode explicitly only when the recorded packet clock is known to
+share the required downstream epoch. Override `clock_publish_frequency` only
+when a higher raw-packet rate requires it.
+
+Recorded `/tf` and `/tf_static` are replayed by default. Set
+`replay_recorded_tf:=false` when an estimator publishes the same transform
+tree, then let the driver publish its calibrated sensor transforms with
+`pub_static_tf:=true`.
+
 ##### PCAP Replay Mode
 > Note
 > To use this feature you need to compile the driver with `BUILD_PCAP` option enabled

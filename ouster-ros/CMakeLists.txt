@@ -294,12 +294,15 @@ if(BUILD_TESTING)
     test/point_cloud_compose_test.cpp
     test/panorama_camera_info_test.cpp
     test/pinhole_processor_test.cpp
+    test/replay_launch_test.cpp
   )
   if(TARGET ${PROJECT_NAME}_test)
     target_include_directories(${PROJECT_NAME}_test PRIVATE
       ${_ouster_ros_INCLUDE_DIRS}
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     )
+    target_compile_definitions(${PROJECT_NAME}_test PRIVATE
+      OUSTER_ROS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     # Avoid mixing the plain and keyword link signatures used across distros.
     set_property(TARGET ${PROJECT_NAME}_test APPEND PROPERTY
       LINK_LIBRARIES ouster_ros_library)
