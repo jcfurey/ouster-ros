@@ -62,6 +62,7 @@ class OusterPinhole : public OusterProcessingNodeBase {
         declare_parameter("timestamp_mode", "");
         declare_parameter("ptp_utc_tai_offset", -37.0);
         declare_parameter("use_system_default_qos", false);
+        declare_parameter("lidar_packet_reliable", false);
         declare_parameter("min_scan_valid_columns_ratio", 0.0);
 
         // panel_names determines the panel count. A one-element value in any
@@ -272,6 +273,11 @@ class OusterPinhole : public OusterProcessingNodeBase {
         rclcpp::QoS selected_qos = use_system_default_qos
                                        ? rclcpp::QoS(rclcpp::SystemDefaultsQoS())
                                        : rclcpp::QoS(rclcpp::SensorDataQoS());
+        auto lidar_packet_qos = selected_qos;
+        lidar_packet_qos.keep_last(lidar_packet_subscription_depth(info));
+        if (get_parameter("lidar_packet_reliable").as_bool()) {
+            lidar_packet_qos.reliable();
+        }
 
         const auto min_ratio =
             get_parameter("min_scan_valid_columns_ratio").as_double();
@@ -336,9 +342,7 @@ class OusterPinhole : public OusterProcessingNodeBase {
         lidar_packet_buffer_->format = packet_format;
 
         lidar_packet_sub_ = create_subscription<PacketMsg>(
-            "lidar_packets",
-            rclcpp::QoS(selected_qos).keep_last(
-                lidar_packets_per_frame(info)),
+            "lidar_packets", lidar_packet_qos,
             [this, pipeline_generation](const PacketMsg::ConstSharedPtr msg) {
                 std::lock_guard<std::mutex> pipeline_lock(pipeline_mutex);
                 if (!pipeline_is_current(pipeline_generation) ||

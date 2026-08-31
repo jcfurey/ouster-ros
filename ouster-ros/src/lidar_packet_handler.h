@@ -33,9 +33,8 @@ namespace ChanField = ouster::sdk::core::ChanField;
 
 namespace {
 
-template <typename T, typename UnaryPredicate>
-int find_if_reverse(const Eigen::Array<T, -1, 1>& array,
-                    UnaryPredicate predicate) {
+template <typename ArrayT, typename UnaryPredicate>
+int find_if_reverse(const ArrayT& array, UnaryPredicate predicate) {
     auto p = array.data() + array.size() - 1;
     do {
         if (predicate(*p)) return p - array.data();
@@ -429,21 +428,38 @@ class LidarPacketHandler {
         }
 
         if (!(*scan_batcher)(lidar_packet, lidar_scan)) return false;
-        lidar_scan_estimated_ts = compute_scan_ts(lidar_scan.timestamp());
+        const auto scan_timestamps = lidar_scan.timestamp();
+        lidar_scan_estimated_ts = compute_scan_ts(scan_timestamps);
+        const auto last_timestamp_index = find_if_reverse(
+            scan_timestamps, [](uint64_t timestamp) { return timestamp != 0; });
+        uint64_t scan_span_ns = 0;
+        if (last_timestamp_index >= 0) {
+            const auto last_timestamp = scan_timestamps(last_timestamp_index);
+            if (last_timestamp >= lidar_scan_estimated_ts) {
+                scan_span_ns = last_timestamp - lidar_scan_estimated_ts;
+            }
+        }
         const auto completed_frame_ts =
             lidar_handler_ros_time_frame_timestamps.take(
                 static_cast<uint32_t>(lidar_scan.frame_id));
+        int64_t first_packet_start_ns = 0;
         if (completed_frame_ts) {
-            lidar_scan_estimated_msg_ts = rclcpp::Time(*completed_frame_ts);
+            first_packet_start_ns = *completed_frame_ts;
         } else {
             RCLCPP_WARN_STREAM(
                 rclcpp::get_logger(getName()),
                 "No reception timestamp found for completed lidar frame "
                     << lidar_scan.frame_id
                     << "; using the current packet estimate");
-            lidar_scan_estimated_msg_ts = extrapolate_frame_ts(
-                pf, lidar_packet.buf.data(), packet_receive_time);
+            first_packet_start_ns =
+                extrapolate_frame_ts(pf, lidar_packet.buf.data(),
+                                     packet_receive_time)
+                    .nanoseconds();
         }
+        lidar_scan_estimated_msg_ts = rclcpp::Time(
+            impl::select_ros_time_frame_start(
+                first_packet_start_ns, packet_receive_time.nanoseconds(),
+                scan_span_ns));
         return true;
     }
 

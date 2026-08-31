@@ -60,6 +60,7 @@ class OusterCloud : public OusterProcessingNodeBase {
         declare_parameter("ptp_utc_tai_offset", -37.0);
         declare_parameter("proc_mask", "IMU|PCL|SCAN");
         declare_parameter("use_system_default_qos", false);
+        declare_parameter("lidar_packet_reliable", false);
         declare_parameter("scan_ring", 0);
         declare_parameter("point_type", "original");
         declare_parameter("organized", true);
@@ -95,6 +96,11 @@ class OusterCloud : public OusterProcessingNodeBase {
             use_system_default_qos ?
                 static_cast<rclcpp::QoS>(rclcpp::SystemDefaultsQoS()) :
                 static_cast<rclcpp::QoS>(rclcpp::SensorDataQoS());
+        auto lidar_packet_qos = selected_qos;
+        lidar_packet_qos.keep_last(lidar_packet_subscription_depth(info));
+        if (get_parameter("lidar_packet_reliable").as_bool()) {
+            lidar_packet_qos.reliable();
+        }
 
         auto proc_mask = get_parameter("proc_mask").as_string();
         auto tokens = impl::parse_tokens(proc_mask, '|');
@@ -235,8 +241,7 @@ class OusterCloud : public OusterProcessingNodeBase {
             impl::check_token(tokens, "SCAN") ||
             impl::check_token(tokens, "TLM")) {
             lidar_packet_sub = create_subscription<PacketMsg>(
-                "lidar_packets",
-                rclcpp::QoS(selected_qos).keep_last(lidar_packets_per_frame(info)),
+                "lidar_packets", lidar_packet_qos,
                 [this](const PacketMsg::ConstSharedPtr msg) {
                     // TODO[UN]: this is not ideal since we can't reuse the msg buffer
                     // Need to redefine the Packet object and allow use of array_views

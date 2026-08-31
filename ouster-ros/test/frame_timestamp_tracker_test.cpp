@@ -56,5 +56,18 @@ TEST(FrameTimestampTrackerTest, EvictsStaleFramesAtConfiguredCapacity) {
     EXPECT_EQ(tracker.take(12), 1'200);
 }
 
+TEST(FrameTimestampTrackerTest, PacedDeliveryKeepsFirstPacketEstimate) {
+    EXPECT_EQ(select_ros_time_frame_start(1'000, 1'100, 99), 1'000);
+}
+
+TEST(FrameTimestampTrackerTest, BurstDeliverySubtractsCompletedScanSpan) {
+    EXPECT_EQ(select_ros_time_frame_start(1'100, 1'100, 99), 1'001);
+}
+
+TEST(FrameTimestampTrackerTest, CompletedScanCannotUnderflowRosTime) {
+    EXPECT_EQ(select_ros_time_frame_start(5, 5, 99), 0);
+    EXPECT_EQ(select_ros_time_frame_start(-10, 100, 20), 0);
+}
+
 }  // namespace impl
 }  // namespace ouster_ros

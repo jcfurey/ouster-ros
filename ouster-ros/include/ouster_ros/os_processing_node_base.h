@@ -11,6 +11,8 @@
 
 #include <ouster/types.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -52,6 +54,28 @@ class OusterProcessingNodeBase : public rclcpp::Node {
 
     bool pipeline_is_current(uint64_t generation) const {
         return generation == pipeline_generation_;
+    }
+
+    static std::size_t lidar_packet_subscription_depth(
+        const ouster::sdk::core::SensorInfo& sensor_info) noexcept {
+        constexpr std::size_t kMinimumSensorDataDepth = 5;
+        constexpr std::size_t kBufferedFrames = 2;
+        const auto columns_per_frame =
+            static_cast<std::size_t>(sensor_info.format.columns_per_frame);
+        const auto columns_per_packet =
+            static_cast<std::size_t>(sensor_info.format.columns_per_packet);
+        if (columns_per_frame == 0 || columns_per_packet == 0) {
+            return kMinimumSensorDataDepth;
+        }
+
+        const auto packets_per_frame =
+            columns_per_frame / columns_per_packet +
+            (columns_per_frame % columns_per_packet != 0 ? 1u : 0u);
+        // A simulated frame may arrive as one intentional packet burst. Keep
+        // one complete frame queued while the preceding frame's cloud or
+        // image products are being assembled.
+        return std::max(kMinimumSensorDataDepth,
+                        kBufferedFrames * packets_per_frame);
     }
 
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr metadata_sub;

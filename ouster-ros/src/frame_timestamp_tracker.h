@@ -19,6 +19,29 @@ namespace ouster_ros {
 namespace impl {
 
 /**
+ * Select a ROS-time acquisition-start stamp for a completed scan.
+ *
+ * Normally the first packet is received near acquisition start and its
+ * extrapolated timestamp is the best estimate. A buffered simulator may
+ * instead deliver the entire completed scan as one burst, making that first
+ * receipt occur at acquisition end. In either case, a complete scan must not
+ * end after the ROS time at which its final packet was received.
+ */
+inline int64_t select_ros_time_frame_start(int64_t first_packet_start_ns,
+                                           int64_t completion_receive_ns,
+                                           uint64_t scan_span_ns) noexcept {
+    if (completion_receive_ns <= 0) return 0;
+
+    const auto completion_ns = static_cast<uint64_t>(completion_receive_ns);
+    const int64_t completion_based_start_ns =
+        scan_span_ns >= completion_ns
+            ? 0
+            : completion_receive_ns - static_cast<int64_t>(scan_span_ns);
+    return std::max<int64_t>(
+        0, std::min(first_packet_start_ns, completion_based_start_ns));
+}
+
+/**
  * Tracks the first reception-derived timestamp observed for each lidar frame.
  *
  * ScanBatcher can finish either on the final packet of a complete frame or on
