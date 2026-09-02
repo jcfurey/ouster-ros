@@ -107,7 +107,7 @@ class OusterReplay : public OusterSensorNodeBase {
    private:
     void declare_parameters() {
         declare_parameter("auto_start", true);
-        declare_parameter<std::string>("metadata");
+        declare_parameter<std::string>("metadata", "");
     }
 
     std::string parse_parameters() {
@@ -122,18 +122,33 @@ class OusterReplay : public OusterSensorNodeBase {
 
     void load_metadata_from_file(const std::string& meta_file) {
         try {
-            cached_metadata = impl::read_text_file(meta_file);
-            info = ouster::sdk::core::SensorInfo(cached_metadata);
+            const auto metadata = impl::read_text_file(meta_file);
+            if (metadata.empty()) {
+                throw std::runtime_error(
+                    "metadata file missing, unreadable, or empty: " + meta_file);
+            }
+            info = ouster::sdk::core::SensorInfo(metadata);
+            {
+                std::lock_guard<std::mutex> lock(cached_metadata_mutex);
+                cached_metadata = metadata;
+            }
             display_lidar_info(info);
-        } catch (const std::runtime_error& e) {
-            cached_metadata.clear();
+        } catch (const std::exception& e) {
+            {
+                std::lock_guard<std::mutex> lock(cached_metadata_mutex);
+                cached_metadata.clear();
+            }
             RCLCPP_ERROR_STREAM(
                 get_logger(),
                 "Error when running in replay mode: " << e.what());
+            throw;
         }
     }
 
-    void cleanup() { get_metadata_srv.reset(); }
+    void cleanup() {
+        get_metadata_srv.reset();
+        metadata_pub.reset();
+    }
 };
 
 }  // namespace ouster_ros
