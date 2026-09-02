@@ -15,6 +15,9 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
+#include <exception>
+#include <utility>
+
 #include "ouster_sensor_msgs/msg/packet_msg.hpp"
 #include "ouster_ros/os_processing_node_base.h"
 #include "ouster_ros/visibility_control.h"
@@ -51,6 +54,8 @@ class OusterCloud : public OusterProcessingNodeBase {
         tf_bcast.parse_parameters();
         create_metadata_subscriber(
             [this](const auto& msg) { metadata_handler(msg); });
+        load_metadata_from_file(
+            [this](const auto& msg) { metadata_handler(msg); });
         RCLCPP_INFO(get_logger(), "OusterCloud: node initialized!");
     }
 
@@ -74,15 +79,33 @@ class OusterCloud : public OusterProcessingNodeBase {
 
     void metadata_handler(
         const std_msgs::msg::String::ConstSharedPtr& metadata_msg) {
-        RCLCPP_INFO(get_logger(),
-                    "OusterCloud: retrieved new sensor metadata!");
-        info = ouster::sdk::core::SensorInfo(metadata_msg->data);
-        packet_format = std::make_shared<ouster::sdk::core::PacketFormat>(
-            ouster::sdk::core::get_format(info));
-        if (tf_bcast.publish_static_tf()) {
-            tf_bcast.broadcast_transforms(info);
+        if (metadata_is_active(metadata_msg->data)) {
+            RCLCPP_DEBUG(get_logger(),
+                         "OusterCloud: ignoring unchanged sensor metadata");
+            return;
         }
-        create_publishers_subscriptions(info);
+
+        RCLCPP_INFO(get_logger(), "OusterCloud: activating sensor metadata");
+        try {
+            auto parsed_info =
+                ouster::sdk::core::SensorInfo(metadata_msg->data);
+            auto parsed_format =
+                std::make_shared<ouster::sdk::core::PacketFormat>(
+                    ouster::sdk::core::get_format(parsed_info));
+            info = std::move(parsed_info);
+            packet_format = std::move(parsed_format);
+            if (tf_bcast.publish_static_tf()) {
+                tf_bcast.broadcast_transforms(info);
+            }
+            create_publishers_subscriptions(info);
+            mark_metadata_active(metadata_msg->data);
+        } catch (const std::exception& e) {
+            invalidate_active_metadata();
+            RCLCPP_ERROR_STREAM(
+                get_logger(),
+                "OusterCloud: failed to activate sensor metadata: "
+                    << e.what());
+        }
     }
 
     void create_publishers_subscriptions(const ouster::sdk::core::SensorInfo& info) {

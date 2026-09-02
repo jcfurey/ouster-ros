@@ -95,6 +95,8 @@ class OusterPinhole : public OusterProcessingNodeBase {
 
         create_metadata_subscriber(
             [this](const auto& msg) { metadata_handler(msg); });
+        load_metadata_from_file(
+            [this](const auto& msg) { metadata_handler(msg); });
         RCLCPP_INFO(get_logger(), "OusterPinhole: node initialized!");
     }
 

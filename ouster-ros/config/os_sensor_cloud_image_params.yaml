@@ -37,6 +37,7 @@ ouster/os_cloud:
     lidar_frame: os_lidar
     imu_frame: os_imu
     point_cloud_frame: os_lidar
+    metadata: '' # optional sensor metadata JSON path for packet playback
     pub_static_tf: true
     timestamp_mode: ''  # this value needs to match os_sensor/timestamp_mode
     ptp_utc_tai_offset: -37.0 # UTC/TAI offset in seconds to apply when using TIME_FROM_PTP_1588
@@ -48,6 +49,7 @@ ouster/os_cloud:
 ouster/os_image:
   ros__parameters:
     use_system_default_qos: false # needs to match the value defined for os_sensor node
+    metadata: '' # optional sensor metadata JSON path for packet playback
     publish_camera_info: false # display-only approximation for the equirectangular panorama;
                                # use os_pinhole for pinhole geometry
     frame_id: os_lidar # frame_id for the published image and camera_info messages
@@ -57,6 +59,7 @@ ouster/os_pinhole:
   ros__parameters:
     # range_image is uint16 radial range at 4 mm/LSB, not optical-axis depth
     use_system_default_qos: false # needs to match os_sensor
+    metadata: '' # optional sensor metadata JSON path for packet playback
     panel_names: [front, left, rear, right]
     panel_yaws_deg: [0.0, 90.0, 180.0, 270.0]
     panel_pitches_deg: [0.0] # one value is broadcast to every panel

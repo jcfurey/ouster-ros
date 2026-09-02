@@ -76,6 +76,8 @@ class OusterImage : public OusterProcessingNodeBase {
         declare_parameter("publish_camera_info", false);
         create_metadata_subscriber(
             [this](const auto& msg) { metadata_handler(msg); });
+        load_metadata_from_file(
+            [this](const auto& msg) { metadata_handler(msg); });
         RCLCPP_INFO(get_logger(), "OusterImage: node initialized!");
     }
 

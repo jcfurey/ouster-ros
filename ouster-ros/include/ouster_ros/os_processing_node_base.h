@@ -33,6 +33,11 @@ class OusterProcessingNodeBase : public rclcpp::Node {
         std::function<void(const std_msgs::msg::String::ConstSharedPtr&)>
             on_sensor_metadata);
 
+    bool load_metadata_from_file(
+        const std::function<void(
+            const std_msgs::msg::String::ConstSharedPtr&)>&
+            on_sensor_metadata);
+
     // Protect pipeline replacement from in-flight packet callbacks.
     std::mutex pipeline_mutex;
 
