@@ -15,7 +15,9 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
+#include <cstring>
 #include <exception>
+#include <memory>
 #include <utility>
 
 #include "ouster_sensor_msgs/msg/packet_msg.hpp"
@@ -42,6 +44,11 @@ class OusterCloud : public OusterProcessingNodeBase {
     explicit OusterCloud(const rclcpp::NodeOptions& options)
         : OusterProcessingNodeBase("os_cloud", options), tf_bcast(*this) {
         on_init();
+    }
+
+    ~OusterCloud() override {
+        std::lock_guard<std::mutex> pipeline_lock(pipeline_mutex);
+        stop_pipeline();
     }
 
    private:
@@ -79,6 +86,7 @@ class OusterCloud : public OusterProcessingNodeBase {
 
     void metadata_handler(
         const std_msgs::msg::String::ConstSharedPtr& metadata_msg) {
+        std::lock_guard<std::mutex> pipeline_lock(pipeline_mutex);
         if (metadata_is_active(metadata_msg->data)) {
             RCLCPP_DEBUG(get_logger(),
                          "OusterCloud: ignoring unchanged sensor metadata");
@@ -92,14 +100,16 @@ class OusterCloud : public OusterProcessingNodeBase {
             auto parsed_format =
                 std::make_shared<ouster::sdk::core::PacketFormat>(
                     ouster::sdk::core::get_format(parsed_info));
+            const uint64_t pipeline_generation = stop_pipeline();
             info = std::move(parsed_info);
             packet_format = std::move(parsed_format);
             if (tf_bcast.publish_static_tf()) {
                 tf_bcast.broadcast_transforms(info);
             }
-            create_publishers_subscriptions(info);
+            create_publishers_subscriptions(info, pipeline_generation);
             mark_metadata_active(metadata_msg->data);
         } catch (const std::exception& e) {
+            stop_pipeline();
             invalidate_active_metadata();
             RCLCPP_ERROR_STREAM(
                 get_logger(),
@@ -108,7 +118,9 @@ class OusterCloud : public OusterProcessingNodeBase {
         }
     }
 
-    void create_publishers_subscriptions(const ouster::sdk::core::SensorInfo& info) {
+    void create_publishers_subscriptions(
+        const ouster::sdk::core::SensorInfo& info,
+        uint64_t pipeline_generation) {
         auto timestamp_mode = get_parameter("timestamp_mode").as_string();
         auto ptp_utc_tai_offset =
             get_parameter("ptp_utc_tai_offset").as_double();
@@ -134,21 +146,36 @@ class OusterCloud : public OusterProcessingNodeBase {
             imu_packet_handler = ImuPacketHandler::create(
                 info, tf_bcast.imu_frame_id(), timestamp_mode,
                 static_cast<int64_t>(ptp_utc_tai_offset * 1e+9));
+            imu_packet_buffer =
+                std::make_unique<ImuPacket>(packet_format->imu_packet_size);
+            imu_packet_buffer->format = packet_format;
             imu_packet_sub = create_subscription<PacketMsg>(
                 "imu_packets",
                 rclcpp::QoS(selected_qos).keep_last(info.format.imu_packets_per_frame),
-                [this](const PacketMsg::ConstSharedPtr msg) {
-                    if (imu_packet_handler) {
-                        // TODO[UN]: this is not ideal since we can't reuse the msg buffer
-                        // Need to redefine the Packet object and allow use of array_views
-                        ImuPacket imu_packet(msg->buf.size());
-                        imu_packet.format = packet_format;
-                        imu_packet.host_timestamp = static_cast<uint64_t>(now().nanoseconds());
-                        memcpy(imu_packet.buf.data(), msg->buf.data(), msg->buf.size());
-                        auto imu_msgs = imu_packet_handler(imu_packet);
-                        for (const auto& imu_msg : imu_msgs) {
-                            imu_pub->publish(imu_msg);
-                        }
+                [this, pipeline_generation](const PacketMsg::ConstSharedPtr msg) {
+                    std::lock_guard<std::mutex> pipeline_lock(pipeline_mutex);
+                    if (!pipeline_is_current(pipeline_generation) ||
+                        !imu_packet_handler || !imu_packet_buffer ||
+                        !packet_format) {
+                        return;
+                    }
+                    const size_t expected_size = packet_format->imu_packet_size;
+                    if (msg->buf.size() < expected_size) {
+                        RCLCPP_WARN_STREAM_THROTTLE(
+                            get_logger(), *get_clock(), 1000,
+                            "dropping undersized imu_packets msg ("
+                                << msg->buf.size() << " < " << expected_size
+                                << " bytes)");
+                        return;
+                    }
+                    auto& imu_packet = *imu_packet_buffer;
+                    imu_packet.host_timestamp =
+                        static_cast<uint64_t>(now().nanoseconds());
+                    std::memcpy(imu_packet.buf.data(), msg->buf.data(),
+                                expected_size);
+                    auto imu_msgs = imu_packet_handler(imu_packet);
+                    for (const auto& imu_msg : imu_msgs) {
+                        imu_pub->publish(imu_msg);
                     }
                 });
         }
@@ -162,15 +189,22 @@ class OusterCloud : public OusterProcessingNodeBase {
         int num_returns = info.num_returns();
 
         std::vector<LidarScanProcessor> processors;
+        bool needs_rgb = false;
 
         if (impl::check_token(tokens, "PCL")) {
+            rclcpp::PublisherOptions point_cloud_pub_options;
+            point_cloud_pub_options.qos_overriding_options =
+                rclcpp::QosOverridingOptions::with_default_policies();
             lidar_pubs.resize(num_returns);
             for (int i = 0; i < num_returns; ++i) {
                 lidar_pubs[i] = create_publisher<sensor_msgs::msg::PointCloud2>(
-                    topic_for_return("points", i), selected_qos);
+                    topic_for_return("points", i), selected_qos,
+                    point_cloud_pub_options);
             }
 
             auto point_type = get_parameter("point_type").as_string();
+            needs_rgb =
+                PointCloudProcessorFactory::point_type_produces_color(point_type);
             auto organized = get_parameter("organized").as_bool();
             auto destagger = get_parameter("destagger").as_bool();
             auto min_range_m = get_parameter("min_range").as_double();
@@ -248,7 +282,7 @@ class OusterCloud : public OusterProcessingNodeBase {
             lidar_packet_handler = LidarPacketHandler::create(
                 info, processors, timestamp_mode,
                 static_cast<int64_t>(ptp_utc_tai_offset * 1e+9),
-                min_scan_valid_columns_ratio);
+                min_scan_valid_columns_ratio, needs_rgb);
         }
 
         if (impl::check_token(tokens, "TLM")) {
@@ -263,15 +297,31 @@ class OusterCloud : public OusterProcessingNodeBase {
         if (impl::check_token(tokens, "PCL") ||
             impl::check_token(tokens, "SCAN") ||
             impl::check_token(tokens, "TLM")) {
+            lidar_packet_buffer =
+                std::make_unique<LidarPacket>(packet_format->lidar_packet_size);
+            lidar_packet_buffer->format = packet_format;
             lidar_packet_sub = create_subscription<PacketMsg>(
                 "lidar_packets", lidar_packet_qos,
-                [this](const PacketMsg::ConstSharedPtr msg) {
-                    // TODO[UN]: this is not ideal since we can't reuse the msg buffer
-                    // Need to redefine the Packet object and allow use of array_views
-                    LidarPacket lidar_packet(msg->buf.size());
-                    lidar_packet.format = packet_format;
-                    lidar_packet.host_timestamp = static_cast<uint64_t>(now().nanoseconds());
-                    memcpy(lidar_packet.buf.data(), msg->buf.data(), msg->buf.size());
+                [this, pipeline_generation](const PacketMsg::ConstSharedPtr msg) {
+                    std::lock_guard<std::mutex> pipeline_lock(pipeline_mutex);
+                    if (!pipeline_is_current(pipeline_generation) ||
+                        !lidar_packet_buffer || !packet_format) {
+                        return;
+                    }
+                    const size_t expected_size = packet_format->lidar_packet_size;
+                    if (msg->buf.size() < expected_size) {
+                        RCLCPP_WARN_STREAM_THROTTLE(
+                            get_logger(), *get_clock(), 1000,
+                            "dropping undersized lidar_packets msg ("
+                                << msg->buf.size() << " < " << expected_size
+                                << " bytes)");
+                        return;
+                    }
+                    auto& lidar_packet = *lidar_packet_buffer;
+                    lidar_packet.host_timestamp =
+                        static_cast<uint64_t>(now().nanoseconds());
+                    std::memcpy(lidar_packet.buf.data(), msg->buf.data(),
+                                expected_size);
 
                     if (telemetry_handler) {
                         auto telemetry = telemetry_handler(lidar_packet);
@@ -283,6 +333,22 @@ class OusterCloud : public OusterProcessingNodeBase {
                     }
                 });
         }
+    }
+
+    uint64_t stop_pipeline() {
+        const uint64_t generation = begin_pipeline_update();
+        lidar_packet_sub.reset();
+        imu_packet_sub.reset();
+        lidar_packet_handler = nullptr;
+        imu_packet_handler = nullptr;
+        telemetry_handler = nullptr;
+        lidar_packet_buffer.reset();
+        imu_packet_buffer.reset();
+        lidar_pubs.clear();
+        scan_pubs.clear();
+        imu_pub.reset();
+        telemetry_pub.reset();
+        return generation;
     }
 
    private:
@@ -299,6 +365,8 @@ class OusterCloud : public OusterProcessingNodeBase {
 
     ImuPacketHandler::HandlerType imu_packet_handler;
     LidarPacketHandler::HandlerType lidar_packet_handler;
+    std::unique_ptr<ImuPacket> imu_packet_buffer;
+    std::unique_ptr<LidarPacket> lidar_packet_buffer;
 
     rclcpp::Publisher<ouster_sensor_msgs::msg::Telemetry>::SharedPtr telemetry_pub;
     TelemetryHandler::HandlerType telemetry_handler;
