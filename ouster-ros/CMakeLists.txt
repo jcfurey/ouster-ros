@@ -291,6 +291,7 @@ if(BUILD_TESTING)
     test/lock_free_ring_buffer_test.cpp
     test/frame_timestamp_tracker_test.cpp
     test/packet_subscription_depth_test.cpp
+    test/lidar_packet_handler_test.cpp
     test/point_accessor_test.cpp
     test/point_transform_test.cpp
     test/point_cloud_compose_test.cpp

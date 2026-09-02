@@ -14,9 +14,10 @@
 #include <atomic>
 
 /**
- * @class LockFreeRingBuffer thread safe ring buffer.
- * 
+ * @class LockFreeRingBuffer single-producer, single-consumer ring buffer.
+ *
  * @remarks current implementation has effective (capacity-1) when writing elements
+ * write()/write_head() and read()/read_head() each require a single caller.
  */
 class LockFreeRingBuffer {
    public:
@@ -40,9 +41,9 @@ class LockFreeRingBuffer {
      *  wouldn't cause the calling thread to be blocked.
      */
     size_t size() const {
-        return write_idx_ >= read_idx_ ?
-            write_idx_ - read_idx_ :
-            write_idx_ + capacity_ - read_idx_;
+        const size_t write = write_idx_.load();
+        const size_t read = read_idx_.load();
+        return write >= read ? write - read : write + capacity_ - read;
     }
 
     size_t available() const {
