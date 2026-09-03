@@ -77,11 +77,11 @@ def generate_test_description():
             **common,
             'panel_names': ['front'],
             'panel_yaws_deg': [0.0],
-            'panel_pitches_deg': [0.0],
+            'panel_pitches_deg': [10.0],
             'panel_hfovs_deg': [90.0],
             'panel_widths': [64],
             'panel_heights': [32],
-            'panel_vfovs_deg': [90.0],
+            'panel_vfovs_deg': [60.0],
             'parent_frame': 'test_lidar',
         },
     )
@@ -385,6 +385,17 @@ class TestCameraNodes(unittest.TestCase):
         self.assertEqual((64, 32), (pinhole_info.width, pinhole_info.height))
         self.assertEqual('plumb_bob', pinhole_info.distortion_model)
         self.assertEqual(pinhole_frame, pinhole_info.header.frame_id)
+        self.assertAlmostEqual(32.0, pinhole_info.k[0], places=12)
+        self.assertAlmostEqual(16.0 / math.tan(math.radians(30.0)),
+                               pinhole_info.k[4], places=12)
+        self.assertAlmostEqual(31.5, pinhole_info.k[2], places=12)
+        self.assertAlmostEqual(15.5, pinhole_info.k[5], places=12)
+        self.assertEqual((0, 0, 64, 32), (
+            pinhole_info.roi.x_offset,
+            pinhole_info.roi.y_offset,
+            pinhole_info.roi.width,
+            pinhole_info.roi.height,
+        ))
         self.assertEqual('mono16', pinhole_range.encoding)
         self.assertEqual('32FC1', pinhole_depth.encoding)
         self.assertEqual('32FC1', pinhole_depth2.encoding)
@@ -437,7 +448,9 @@ class TestCameraNodes(unittest.TestCase):
         )
         pinhole_forward = _rotated_optical_z(transforms[pinhole_tf_key])
         panorama_forward = _rotated_optical_z(transforms[panorama_tf_key])
-        for actual, expected in zip(pinhole_forward, (1.0, 0.0, 0.0)):
+        pitch = math.radians(10.0)
+        for actual, expected in zip(
+                pinhole_forward, (math.cos(pitch), 0.0, math.sin(pitch))):
             self.assertAlmostEqual(expected, actual, places=6)
         for actual, expected in zip(panorama_forward, (-1.0, 0.0, 0.0)):
             self.assertAlmostEqual(expected, actual, places=6)
