@@ -17,7 +17,12 @@ import launch_ros.actions
 import launch_testing
 import launch_testing.actions
 
-from launch_testing_ros.actions import EnableRmwIsolation
+try:
+    from launch_testing_ros.actions import EnableRmwIsolation
+except ImportError:
+    # Humble predates this action. The test still uses dedicated names and
+    # topics there, while newer distributions also isolate the RMW graph.
+    EnableRmwIsolation = None
 
 from ouster_sensor_msgs.msg import PacketMsg
 
@@ -102,14 +107,13 @@ def generate_test_description():
         [('lidar_packets', '/camera_test/lidar_packets')],
     )
 
+    actions = [pinhole, image_enabled, image_default]
+    if EnableRmwIsolation is not None:
+        actions.insert(0, EnableRmwIsolation())
+    actions.append(launch_testing.actions.ReadyToTest())
+
     return (
-        launch.LaunchDescription([
-            EnableRmwIsolation(),
-            pinhole,
-            image_enabled,
-            image_default,
-            launch_testing.actions.ReadyToTest(),
-        ]),
+        launch.LaunchDescription(actions),
         {
             'pinhole': pinhole,
             'image_enabled': image_enabled,
