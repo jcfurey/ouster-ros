@@ -3,7 +3,7 @@
 This is the working handoff plan for moving the camera-specific improvements
 from `cam-wip` back to `pr/ros2-camera-info`, the source branch for
 [ouster-lidar/ouster-ros#564](https://github.com/ouster-lidar/ouster-ros/pull/564).
-It records the branch state as of 2026-09-02 (America/Chicago). Recheck remote
+It records the branch state as of 2026-09-03 (America/Chicago). Recheck remote
 heads before carrying out the commands below.
 
 This document is for the `cam-wip` branch only. It is not part of the proposed
@@ -11,44 +11,52 @@ camera PR transfer set.
 
 ## Current state
 
-- Tested camera implementation/test tip on `cam-wip`: `2c090b8`
-- Camera PR branch tip: `f54f73d`
-- Camera PR base branch: `ros2`
-- Build-modernization PR branch tip: `c239387`
-- The last common build-modernization commit is `87f0e5a`.
-- PR #553 is the prerequisite build-modernization PR. At this snapshot it is
-  approved, mergeable, and passing Humble, Jazzy, Kilted, Lyrical, and Rolling
-  jobs across its three RMW implementations.
-- PR #564 is open and mergeable, but still requires review.
+- Tested camera implementation tip on `cam-wip`: `e8ec0a5`
+- Camera PR branch tip: `8bd6636`
+- Camera PR base branch tip: `origin/ros2` at `d72664f`
+- PR #553 has merged as `d72664f`; the camera branch has already been rebased
+  directly onto it.
+- PR #564 contains one camera feature commit on top of `origin/ros2`.
 
-Do not merge `cam-wip` wholesale into the camera branch. It contains several
-packet, replay, timestamp, lifecycle, and point-cloud changes that are useful
-on the work branch but would unnecessarily broaden PR #564.
+Do not merge `cam-wip` wholesale into the camera branch. It contains packet,
+replay, timestamp, lifecycle, and point-cloud changes that would unnecessarily
+broaden PR #564.
 
-## Improvements completed on `cam-wip`
+## Camera improvements completed on `cam-wip`
 
 The camera work now includes:
 
 - calibrated pinhole `depth_image` and `depth_image2` topics;
 - `32FC1` optical-axis depth in metres, with `NaN` for invalid pixels;
 - beam-origin compensation using the SDK XYZ lookup table;
+- pixel-centred principal points and independently configurable horizontal and
+  vertical focal lengths;
+- automatic vertical FOV fitting that accounts for panel pitch and asymmetric
+  lidar beam angles;
+- nearest-beam support boundaries based on the actual edge-beam spacing;
+- source selection and depth projection consistent with a nonzero configured
+  column-zero azimuth;
+- validation and masking of normal or seam-wrapped metadata `column_window`s;
+- optional physical cropping of unsupported pinhole borders, enabled by
+  default, with full-panel `CameraInfo` calibration and an exact ROI describing
+  the emitted image;
+- truthful full-resolution panorama ROI when `os_image` still emits a complete
+  zero-padded raster whose row-dependent destaggered support cannot be
+  represented by one rectangle;
 - matching timestamps and optical frame IDs across images and `CameraInfo`;
 - finite-parameter, sensor-geometry, allocation, wrapping, and buffer-access
-  validation;
+  validation; and
 - documentation distinguishing radial `range_image` from metric
-  `depth_image` and showing a `depth_image_proc` invocation;
-- unit coverage for calibration, invalid ranges, dual returns, large azimuth
-  offsets, bad geometry, non-finite parameters, and representative legacy
-  metadata; and
-- a dependency-free, PCAP-backed launch test for the real `os_pinhole` and
-  `os_image` executables.
+  `depth_image` and showing a `depth_image_proc` invocation.
 
-The launch test checks:
+The packet-backed launch test checks the real `os_pinhole` and `os_image`
+executables, including:
 
 - default opt-out and explicit opt-in behavior for panorama `CameraInfo`;
 - pinhole range, depth, dual-return depth, and `CameraInfo` messages;
-- encodings, dimensions, steps, timestamps, and frame IDs;
-- optical-frame orientations published on `/tf_static`;
+- independent `fx`/`fy`, half-pixel principal points, ROI, encodings,
+  dimensions, steps, timestamps, and frame IDs;
+- pitched optical-frame orientation on `/tf_static`;
 - rejection of undersized packets;
 - idempotent metadata handling and recovery after malformed metadata; and
 - parsing of all modified camera-related launch files.
@@ -59,93 +67,75 @@ when running on Humble.
 
 ## Verification snapshot
 
-The final `cam-wip` tree passed:
+The `e8ec0a5` tree passed:
 
-- all 48 C++ gtests in Release mode;
-- all 48 C++ gtests with Debug assertions enabled;
-- all three launch-test cases in both builds;
-- `flake8` for `camera_nodes_launch_test.py`; and
+- all 55 C++ gtests in Release mode;
+- all 55 C++ gtests with Debug assertions enabled;
+- all packet-backed launch-test cases in both builds;
+- `flake8` and byte-compilation for `camera_nodes_launch_test.py`;
+- the seven existing `cardinal_direction` estimator tests; and
 - `git diff --check`.
 
-Measured line coverage from the assertion-enabled run was:
-
-| Source | Line coverage |
-| --- | ---: |
-| `os_pinhole_node.cpp` | 88.78% |
-| `os_image_node.cpp` | 91.08% |
-| `os_processing_node_base.cpp` | 86.96% |
-
-The launch test was also built and run with `BUILD_PCAP=OFF`; it reads the
-already-vendored SDK PCAP fixture directly and does not depend on the optional
-PCAP library target.
+The focused camera tests cover normal and wrapped column windows, cropped and
+padded output, independent FOV intrinsics, asymmetric pitched auto-FOV,
+cardinal panel axes, metric depth, and sampled-lidar reprojection with a
+nonzero column-zero azimuth.
 
 ## Commit disposition
 
 | `cam-wip` commit | Camera PR action | Reason |
 | --- | --- | --- |
-| `459f5f3` | Skip | Patch-equivalent to PR #553 commit `c239387`. |
-| `75460aa` | Skip | Fixes a point-cloud test introduced by unrelated `cam-wip` work. |
-| `b10f98e` | Include | Contains the calibrated pinhole depth implementation, unit tests, configuration comments, and documentation. |
-| `312f157` | Include with adaptation | Adds the end-to-end camera launch test and test dependencies. |
-| `2c090b8` | Include with `312f157` | Adds Humble compatibility for the launch test. |
+| `8bd6636` | Already present | The rebased camera feature commit at the tip of `pr/ros2-camera-info`. |
+| `b1da874` | Include | Calibrated pinhole depth implementation, unit tests, configuration comments, and documentation. |
+| `f16accf` | Include with adaptation | End-to-end camera launch test and test dependencies. |
+| `972287a` | Include with `f16accf` | Humble compatibility for the launch test. |
+| `e8ec0a5` | Include after the three commits above | Geometry, FOV, column-window, cropping, ROI, panorama-honesty, and regression fixes from this audit. |
+| `4c2e2c4` | Skip | This transfer-plan document only. |
 
-The older `cam-wip` commits between `f54f73d` and `459f5f3` should not be
-pulled into PR #564 as part of this transfer.
+The other commits between `8bd6636` and `b1da874` are unrelated `cam-wip`
+hardening work and should not be pulled into PR #564.
 
 ## Recommended transfer procedure
 
 ### 1. Refresh and protect the target branch
 
-Fetch both remotes, switch to the dedicated camera branch, and create a backup
-ref before rewriting it:
+Fetch the remote, switch to the dedicated camera branch, and create a fresh
+backup ref before rewriting it:
 
 ```bash
 git fetch origin
-git fetch upstream ros2
 git switch pr/ros2-camera-info
-git branch backup/pr-ros2-camera-info-before-transfer
+git branch backup/pr-ros2-camera-info-before-camera-fixes
 ```
 
-Verify that the target still ends at the expected camera commit and that
-`87f0e5a` is still the cutoff immediately before the camera work.
-
-### 2. Rebase only the camera commit
-
-The preferred path is to wait until PR #553 merges, refresh `upstream/ros2`,
-and replay only the commit after `87f0e5a`:
+Verify the expected ancestry before proceeding:
 
 ```bash
-git rebase --onto upstream/ros2 87f0e5a pr/ros2-camera-info
+git merge-base --is-ancestor d72664f pr/ros2-camera-info
+git log --oneline origin/ros2..pr/ros2-camera-info
 ```
 
-If the camera branch must be updated before PR #553 merges, use its current
-head as the temporary base instead:
+The second command should initially show only `8bd6636` (or its current
+patch-equivalent if the branch has since been rewritten).
+
+### 2. Apply calibrated depth support
 
 ```bash
-git rebase --onto origin/pr/ros2-build-modernization 87f0e5a \
-  pr/ros2-camera-info
-```
-
-Do not rebase or merge the full `cam-wip` range.
-
-### 3. Apply the depth feature
-
-```bash
-git cherry-pick -x b10f98e
+git cherry-pick -x b1da874
 ```
 
 The configuration-file hunk may need a small manual resolution because its
 `cam-wip` context contains the later metadata-file parameter. Retain the target
-branch's parameter set and bring across only the new range/depth documentation
-unless metadata-file loading is intentionally added to the PR separately.
+branch's parameter set and bring across only the new range/depth behavior and
+documentation unless metadata-file loading is intentionally added separately.
 
-### 4. Port the integration test without broadening the PR
+### 3. Port the integration test without broadening the PR
 
 Apply the launch-test commits without committing immediately so their Humble
 compatibility and target-specific adaptations can form one coherent commit:
 
 ```bash
-git cherry-pick --no-commit 312f157 2c090b8
+git cherry-pick --no-commit f16accf 972287a
 ```
 
 Before committing, adapt `camera_nodes_launch_test.py` so it does not depend on
@@ -163,10 +153,19 @@ the unrelated `cam-wip` metadata-file or packet-QoS work:
    `EnableRmwIsolation` behavior.
 
 Using system-default QoS keeps the test's reliable packet publisher compatible
-without importing the later `lidar_packet_reliable` parameter.
+without importing the later `lidar_packet_reliable` parameter. Commit the
+resulting target-specific test, retaining `f16accf` and `972287a` in its commit
+message for traceability.
 
-Commit the resulting test as one target-branch commit. Include the source
-hashes `312f157` and `2c090b8` in its commit body for traceability.
+### 4. Apply the geometry and ROI audit fixes
+
+```bash
+git cherry-pick -x e8ec0a5
+```
+
+Resolve the launch-test hunk against the adapted test from step 3, retaining
+the pitched panel, independent `fx`/`fy`, principal-point, ROI, and TF checks.
+Do not copy this transfer-plan document into the PR branch.
 
 ### 5. Validate the rebased branch
 
@@ -182,28 +181,39 @@ Use a clean build directory and verify at least:
 Inspect the final history and diff against the actual PR base:
 
 ```bash
-git log --oneline upstream/ros2..HEAD
-git diff --stat upstream/ros2...HEAD
-git diff --check upstream/ros2...HEAD
+git log --oneline origin/ros2..HEAD
+git diff --stat origin/ros2...HEAD
+git diff --check origin/ros2...HEAD
 ```
 
 The resulting range should contain the original camera feature, calibrated
-depth support, and camera tests—not the other `cam-wip` hardening commits.
+depth support, camera tests, and the geometry/ROI audit fixes—not the unrelated
+`cam-wip` hardening commits.
 
 ### 6. Update PR #564
 
-Because the rebase rewrites the dedicated PR branch, review the range locally
-before updating the remote. When approved, use lease protection:
+Review the range locally before updating the rewritten remote branch. When it
+is ready, use lease protection:
 
 ```bash
 git push --force-with-lease origin pr/ros2-camera-info
 ```
 
-After pushing:
+After pushing, confirm the PR diff and commit list, wait for every supported
+ROS/RMW job, update the PR description with the depth and ROI semantics, and
+request review again.
 
-1. Confirm the PR diff and commit list contain only the intended camera work.
-2. Wait for every supported ROS/RMW job to finish.
-3. Update the PR description with the new depth topics, their units and invalid
-   value semantics, the `depth_image_proc` example, and the expanded test
-   coverage.
-4. Request review again after all checks are green.
+## Downstream `cardinal_direction` follow-up
+
+This is not part of the ouster-ros PR, but the downstream estimator must be
+updated before enabling cropped panels in that stack:
+
+- derive its working camera matrix from rectified `P`, subtracting ROI offsets
+  and applying binning, instead of consuming the full-resolution raw `K`
+  unchanged; and
+- obtain the optical-to-output-child rotation from TF instead of duplicating
+  only panel yaw, so configured pitch and any lidar-to-base mounting transform
+  are represented correctly.
+
+It should also reset a panel's tracking state if its image dimensions,
+effective camera matrix, or frame ID changes after a metadata/pipeline rebuild.
