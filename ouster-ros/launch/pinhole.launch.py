@@ -13,7 +13,8 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     package_share = Path(get_package_share_directory('ouster_ros'))
-    default_params = package_share / 'config' / 'os_sensor_cloud_image_params.yaml'
+    default_params = (
+        package_share / 'config' / 'os_pinhole_params.yaml')
 
     namespace = LaunchConfiguration('ouster_ns')
     params_file = LaunchConfiguration('params_file')
