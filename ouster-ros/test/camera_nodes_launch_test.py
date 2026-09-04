@@ -338,6 +338,12 @@ class TestCameraNodes(unittest.TestCase):
                 '/panorama_default/camera_info'),
             'os_image must not publish CameraInfo unless explicitly enabled',
         )
+        self.assertFalse(
+            self.node.get_publishers_info_by_topic(
+                '/camera_test/panels/front/rgb_image'),
+            'os_pinhole must not publish RGB unless explicitly enabled on an '
+            'RGB profile',
+        )
 
         active_metadata = String()
         active_metadata.data = METADATA_PATH.read_text(encoding='utf-8')
