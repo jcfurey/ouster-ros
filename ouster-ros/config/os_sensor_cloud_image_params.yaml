@@ -61,6 +61,10 @@ ouster/os_pinhole:
     # optical-axis depth in metres and pairs with each panel's camera_info
     use_system_default_qos: false # needs to match os_sensor
     metadata: '' # optional sensor metadata JSON path for packet playback
+    # 0 accepts partial startup scans; 1 requires every lidar column.
+    min_scan_valid_columns_ratio: 0.0
+    # With parent_frame=os_lidar, yaw 0 points toward the external connector;
+    # names describe parent-frame axes, not a particular vehicle mounting.
     panel_names: [front, left, rear, right]
     panel_yaws_deg: [0.0, 90.0, 180.0, 270.0]
     panel_pitches_deg: [0.0] # one value is broadcast to every panel
