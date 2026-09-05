@@ -137,12 +137,22 @@ class OusterCloud : public OusterProcessingNodeBase {
             lidar_packet_qos.reliable();
         }
 
+        // Replay can require deeper reliable queues than live sensor defaults.
+        // Use standard ROS QoS overrides independently at each endpoint.
+        rclcpp::PublisherOptions publisher_options;
+        publisher_options.qos_overriding_options =
+            rclcpp::QosOverridingOptions::with_default_policies();
+        rclcpp::SubscriptionOptions subscription_options;
+        subscription_options.qos_overriding_options =
+            rclcpp::QosOverridingOptions::with_default_policies();
+
         auto proc_mask = get_parameter("proc_mask").as_string();
         auto tokens = impl::parse_tokens(proc_mask, '|');
 
         if (impl::check_token(tokens, "IMU")) {
             imu_pub =
-                create_publisher<sensor_msgs::msg::Imu>("imu", selected_qos);
+                create_publisher<sensor_msgs::msg::Imu>(
+                    "imu", selected_qos, publisher_options);
             imu_packet_handler = ImuPacketHandler::create(
                 info, tf_bcast.imu_frame_id(), timestamp_mode,
                 static_cast<int64_t>(ptp_utc_tai_offset * 1e+9));
@@ -151,7 +161,8 @@ class OusterCloud : public OusterProcessingNodeBase {
             imu_packet_buffer->format = packet_format;
             imu_packet_sub = create_subscription<PacketMsg>(
                 "imu_packets",
-                rclcpp::QoS(selected_qos).keep_last(info.format.imu_packets_per_frame),
+                rclcpp::QoS(selected_qos).keep_last(
+                    std::max<size_t>(1, info.format.imu_packets_per_frame)),
                 [this, pipeline_generation](const PacketMsg::ConstSharedPtr msg) {
                     std::lock_guard<std::mutex> pipeline_lock(pipeline_mutex);
                     if (!pipeline_is_current(pipeline_generation) ||
@@ -177,7 +188,7 @@ class OusterCloud : public OusterProcessingNodeBase {
                     for (const auto& imu_msg : imu_msgs) {
                         imu_pub->publish(imu_msg);
                     }
-                });
+                }, subscription_options);
         }
 
         auto min_scan_valid_columns_ratio = get_parameter("min_scan_valid_columns_ratio").as_double();
@@ -192,14 +203,10 @@ class OusterCloud : public OusterProcessingNodeBase {
         bool needs_rgb = false;
 
         if (impl::check_token(tokens, "PCL")) {
-            rclcpp::PublisherOptions point_cloud_pub_options;
-            point_cloud_pub_options.qos_overriding_options =
-                rclcpp::QosOverridingOptions::with_default_policies();
             lidar_pubs.resize(num_returns);
             for (int i = 0; i < num_returns; ++i) {
                 lidar_pubs[i] = create_publisher<sensor_msgs::msg::PointCloud2>(
-                    topic_for_return("points", i), selected_qos,
-                    point_cloud_pub_options);
+                    topic_for_return("points", i), selected_qos, publisher_options);
             }
 
             auto point_type = get_parameter("point_type").as_string();
@@ -331,7 +338,7 @@ class OusterCloud : public OusterProcessingNodeBase {
                     if (lidar_packet_handler) {
                         lidar_packet_handler(lidar_packet);
                     }
-                });
+                }, subscription_options);
         }
     }
 
