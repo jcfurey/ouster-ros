@@ -420,21 +420,6 @@ class LidarPacketHandler {
         };
     }
 
-    uint16_t packet_col_index(const ouster::sdk::core::PacketFormat& pf,
-                              const uint8_t* lidar_buf) {
-        return pf.col_measurement_id(pf.nth_col(0, lidar_buf));
-    }
-
-    rclcpp::Time extrapolate_frame_ts(const ouster::sdk::core::PacketFormat& pf,
-                                      const uint8_t* lidar_buf,
-                                      const rclcpp::Time current_time) {
-        auto curr_scan_first_arrived_idx = packet_col_index(pf, lidar_buf);
-        auto delta_time = rclcpp::Duration(
-            0,
-            std::lround(scan_col_ts_spacing_ns * curr_scan_first_arrived_idx));
-        return current_time - delta_time;
-    }
-
     bool lidar_handler_sensor_time(const ouster::sdk::core::PacketFormat&,
                                    const ouster::sdk::core::LidarPacket& lidar_packet,
                                    ouster::sdk::core::LidarScan& lidar_scan) {
@@ -465,26 +450,14 @@ class LidarPacketHandler {
         return true;
     }
 
+    // Use the completed scan's own packet arrival times: ScanBatcher can
+    // finish on its last packet or on the first packet of the next frame.
     bool lidar_handler_ros_time(const ouster::sdk::core::PacketFormat& pf,
                                 const ouster::sdk::core::LidarPacket& lidar_packet,
                                 ouster::sdk::core::LidarScan& lidar_scan) {
-        auto packet_receive_time = rclcpp::Time(lidar_packet.host_timestamp);
-
-        const auto packet_frame_id = pf.frame_id(lidar_packet.buf.data());
-        if (!lidar_handler_ros_time_frame_timestamps.contains(
-                packet_frame_id)) {
-            const auto packet_frame_ts = extrapolate_frame_ts(
-                pf, lidar_packet.buf.data(), packet_receive_time);
-            lidar_handler_ros_time_frame_timestamps.observe(
-                packet_frame_id, packet_frame_ts.nanoseconds());
-        }
-
         if (!(*scan_batcher)(lidar_packet, lidar_scan)) return false;
         const auto scan_timestamps = lidar_scan.timestamp();
         const auto scan_ts = compute_scan_ts(scan_timestamps);
-        const auto completed_frame_ts =
-            lidar_handler_ros_time_frame_timestamps.take(
-                static_cast<uint32_t>(lidar_scan.frame_id));
         if (!scan_ts) return false;
 
         const auto slot = ring_buffer.write_head();
@@ -498,24 +471,41 @@ class LidarPacketHandler {
                 scan_span_ns = last_timestamp - *scan_ts;
             }
         }
-        int64_t first_packet_start_ns = 0;
-        if (completed_frame_ts) {
-            first_packet_start_ns = *completed_frame_ts;
-        } else {
-            RCLCPP_WARN_STREAM(
-                rclcpp::get_logger(getName()),
-                "No reception timestamp found for completed lidar frame "
-                    << lidar_scan.frame_id
-                    << "; using the current packet estimate");
-            first_packet_start_ns =
-                extrapolate_frame_ts(pf, lidar_packet.buf.data(),
-                                     packet_receive_time)
-                    .nanoseconds();
+
+        // Walk the first received packet back to column zero when leading
+        // packets are missing.
+        const auto packet_ts = lidar_scan.packet_timestamp();
+        int first_packet_idx = -1;
+        for (int i = 0; i < packet_ts.rows(); ++i) {
+            if (packet_ts[i] != 0) {
+                first_packet_idx = i;
+                break;
+            }
         }
+
+        const auto packet_receive_ns =
+            rclcpp::Time(lidar_packet.host_timestamp).nanoseconds();
+        int64_t first_packet_start_ns = 0;
+        if (first_packet_idx >= 0) {
+            first_packet_start_ns =
+                rclcpp::Time(packet_ts[first_packet_idx]).nanoseconds() -
+                std::llround(scan_col_ts_spacing_ns * first_packet_idx *
+                             pf.columns_per_packet);
+        } else {
+            RCLCPP_WARN_ONCE(
+                rclcpp::get_logger(getName()),
+                "lidar scan carries no packet timestamps; falling back to "
+                "the completing packet's arrival time");
+            first_packet_start_ns =
+                packet_receive_ns -
+                std::llround(scan_col_ts_spacing_ns * lidar_scan.w);
+        }
+
+        // Keep burst-delivered scans from ending after reception, and clamp
+        // extrapolated timestamps at zero during ROS clock startup.
         lidar_scan_slot_msg_ts[slot] = rclcpp::Time(
             impl::select_ros_time_frame_start(
-                first_packet_start_ns, packet_receive_time.nanoseconds(),
-                scan_span_ns));
+                first_packet_start_ns, packet_receive_ns, scan_span_ns));
         return true;
     }
 
@@ -540,8 +530,6 @@ class LidarPacketHandler {
     std::vector<std::unique_ptr<std::mutex>> mutexes;
     std::vector<uint64_t> lidar_scan_slot_ts;
     std::vector<rclcpp::Time> lidar_scan_slot_msg_ts;
-
-    impl::FrameTimestampTracker lidar_handler_ros_time_frame_timestamps;
 
     int last_scan_last_nonzero_idx = -1;
     uint64_t last_scan_last_nonzero_value = 0;

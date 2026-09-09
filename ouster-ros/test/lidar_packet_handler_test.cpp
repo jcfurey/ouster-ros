@@ -5,10 +5,16 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <limits>
+#include <map>
+#include <mutex>
+
+#include <ouster/impl/packet_writer.h>
 
 #include "../src/lidar_packet_handler.h"
 
@@ -74,3 +80,109 @@ TEST(LidarPacketHandlerMetadataTest, RejectsInvalidTimingWithoutTerminating) {
         },
         ::testing::ExitedWithCode(0), "");
 }
+
+namespace {
+
+class LidarPacketHandlerRosTimeTest : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        info = ouster::sdk::core::default_sensor_info(
+            ouster::sdk::core::LidarMode::_512x10);
+        // Two packets per 100 ms frame, with exact 3.125 ms column spacing.
+        info.format.columns_per_frame = 32;
+        info.format.columns_per_packet = 16;
+        info.format.column_window = {0, 31};
+        handler = ouster_ros::LidarPacketHandler::create(
+            info,
+            {[this](const ouster::sdk::core::LidarScan& scan, uint64_t,
+                    const rclcpp::Time& stamp) {
+                std::lock_guard<std::mutex> lock(mutex);
+                stamps[scan.frame_id] = stamp.nanoseconds();
+                ready.notify_all();
+            }},
+            "TIME_FROM_ROS_TIME", 0, 0.0f);
+    }
+
+    void send(uint32_t frame, int first_column, uint64_t receive_ns) {
+        const ouster::sdk::core::impl::PacketWriter writer{
+            ouster::sdk::core::get_format(info)};
+        ouster::sdk::core::LidarPacket packet(writer.lidar_packet_size);
+        packet.host_timestamp = receive_ns;
+        writer.set_frame_id(packet.buf.data(), frame);
+        for (int i = 0; i < writer.columns_per_packet; ++i) {
+            auto* column = writer.nth_col(i, packet.buf.data());
+            writer.set_col_measurement_id(column, first_column + i);
+            writer.set_col_status(column, 1);
+            writer.set_col_timestamp(
+                column, 1'000'000'000ULL + (frame - 41) * 100'000'000ULL +
+                            (first_column + i) * 3'125'000ULL);
+        }
+        handler(packet);
+    }
+
+    void expect_stamp(uint32_t frame, int64_t expected_ns) {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(ready.wait_for(lock, std::chrono::seconds(5), [&] {
+            return stamps.count(frame) != 0;
+        })) << "No completed scan for frame " << frame;
+        EXPECT_EQ(stamps.at(frame), expected_ns);
+    }
+
+    ouster::sdk::core::SensorInfo info;
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::map<uint32_t, int64_t> stamps;
+    ouster_ros::LidarPacketHandler::HandlerType handler;
+};
+
+TEST_F(LidarPacketHandlerRosTimeTest, CompleteFramesUseTheirOwnPacketTimes) {
+    send(41, 0, 2'000'000'000);
+    send(41, 16, 2'100'000'000);
+    send(42, 0, 2'200'000'000);
+    send(42, 16, 2'300'000'000);
+
+    expect_stamp(41, 2'000'000'000);
+    expect_stamp(42, 2'200'000'000);
+}
+
+TEST_F(LidarPacketHandlerRosTimeTest, MissingLeadingPacketExtrapolatesToScanStart) {
+    send(41, 16, 2'050'000'000);
+    send(42, 0, 2'200'000'000);
+    send(42, 16, 2'300'000'000);
+
+    expect_stamp(41, 2'000'000'000);
+    expect_stamp(42, 2'200'000'000);
+}
+
+TEST_F(LidarPacketHandlerRosTimeTest, RolloverKeepsTheCompletedFramesPacketTime) {
+    send(41, 0, 2'000'000'000);
+    send(42, 0, 2'200'000'000);
+    send(42, 16, 2'300'000'000);
+
+    expect_stamp(41, 2'000'000'000);
+    expect_stamp(42, 2'200'000'000);
+}
+
+TEST_F(LidarPacketHandlerRosTimeTest, BurstDeliveryPreservesScanSpanCorrection) {
+    send(41, 0, 2'100'000'000);
+    send(41, 16, 2'100'000'000);
+
+    expect_stamp(41, 2'003'125'000);
+}
+
+TEST_F(LidarPacketHandlerRosTimeTest, MissingPacketTimesUseCompletionFallback) {
+    send(41, 0, 0);
+    send(41, 16, 0);
+    send(42, 0, 2'200'000'000);
+
+    expect_stamp(41, 2'100'000'000);
+}
+
+TEST_F(LidarPacketHandlerRosTimeTest, BurstNearClockStartClampsToZero) {
+    send(41, 0, 1);
+    send(41, 16, 1);
+
+    expect_stamp(41, 0);
+}
+
+}  // namespace
