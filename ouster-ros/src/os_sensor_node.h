@@ -68,6 +68,10 @@ class OusterSensor : public OusterSensorNodeBase {
 
     bool start();
 
+    // Derived nodes must stop packet callbacks before destroying the state
+    // those callbacks use. The base destructor alone runs too late for that.
+    void stop_sensor_connection_thread();
+
    private:
     void declare_parameters();
 
@@ -154,8 +158,6 @@ class OusterSensor : public OusterSensorNodeBase {
                          const ouster::sdk::core::PacketFormat& pf);
 
     void start_sensor_connection_thread();
-
-    void stop_sensor_connection_thread();
 
     bool get_active_config_no_throw(const std::string& sensor_hostname,
                                     ouster::sdk::core::SensorConfig& config);

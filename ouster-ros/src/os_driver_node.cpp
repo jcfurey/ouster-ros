@@ -53,6 +53,9 @@ class OusterDriver : public OusterSensor {
 
     ~OusterDriver() override {
         RCLCPP_DEBUG(get_logger(), "OusterDriver::~OusterDriver() called");
+        // The receive thread calls our packet handlers. Join it while those
+        // handlers and their publishers still exist, before member teardown.
+        stop_sensor_connection_thread();
     }
 
     virtual void on_metadata_updated(const SensorInfo& info) override {
