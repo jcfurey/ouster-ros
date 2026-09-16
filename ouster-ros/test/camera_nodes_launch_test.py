@@ -99,7 +99,10 @@ def generate_test_description():
             'publish_camera_info': True,
             'frame_id': 'test_lidar',
         },
-        [('lidar_packets', '/camera_test/lidar_packets')],
+        [
+            ('lidar_packets', '/camera_test/lidar_packets'),
+            ('metadata', '/camera_test/metadata'),
+        ],
     )
     image_default = _camera_node(
         'os_image',
@@ -109,7 +112,10 @@ def generate_test_description():
             **common,
             'frame_id': 'test_lidar_default',
         },
-        [('lidar_packets', '/camera_test/lidar_packets')],
+        [
+            ('lidar_packets', '/camera_test/lidar_packets'),
+            ('metadata', '/camera_test/metadata'),
+        ],
     )
     pinhole_same_frame = _camera_node(
         'os_pinhole',
@@ -282,6 +288,7 @@ class TestCameraNodes(unittest.TestCase):
         received = {}
         received_counts = {}
         transforms = {}
+        transform_counts = {}
         subscriptions = []
 
         def save(key):
@@ -319,8 +326,10 @@ class TestCameraNodes(unittest.TestCase):
 
         def save_transforms(message):
             for transform in message.transforms:
-                transforms[(transform.header.frame_id,
-                            transform.child_frame_id)] = transform.transform
+                key = (transform.header.frame_id,
+                       transform.child_frame_id)
+                transforms[key] = transform.transform
+                transform_counts[key] = transform_counts.get(key, 0) + 1
 
         subscriptions.append(
             self.node.create_subscription(
@@ -338,6 +347,16 @@ class TestCameraNodes(unittest.TestCase):
         metadata_pub = self.node.create_publisher(
             String, '/camera_test/metadata', metadata_qos)
 
+        self._spin_until(
+            lambda: metadata_pub.get_subscription_count() == 3,
+            15.0,
+            'camera nodes did not discover the metadata publisher',
+        )
+
+        active_metadata = String()
+        active_metadata.data = METADATA_PATH.read_text(encoding='utf-8')
+        metadata_pub.publish(active_metadata)
+
         expected_topics = list(image_topics.values()) + [
             '/camera_test/panels/front/camera_info',
             '/panorama_enabled/camera_info',
@@ -345,7 +364,6 @@ class TestCameraNodes(unittest.TestCase):
         self._spin_until(
             lambda: (
                 packet_pub.get_subscription_count() == 3 and
-                metadata_pub.get_subscription_count() == 1 and
                 all(
                     self.node.get_publishers_info_by_topic(topic)
                     for topic in expected_topics
@@ -376,10 +394,8 @@ class TestCameraNodes(unittest.TestCase):
             'a disabled second-return image must not have a publisher',
         )
 
-        active_metadata = String()
-        active_metadata.data = METADATA_PATH.read_text(encoding='utf-8')
-        # The same metadata was loaded from disk during construction. Receiving
-        # it again must be an idempotent no-op, not a pipeline replacement.
+        # Receiving the same metadata again must be an idempotent no-op, not a
+        # pipeline replacement.
         metadata_pub.publish(active_metadata)
 
         # All three nodes must reject a short packet without producing a scan.
@@ -504,6 +520,7 @@ class TestCameraNodes(unittest.TestCase):
             key: received_counts[key]
             for key in ('pinhole_range', 'pinhole_depth', 'pinhole_info')
         }
+        first_pinhole_tf_count = transform_counts[pinhole_tf_key]
         invalid_metadata = String()
         invalid_metadata.data = '{not valid sensor metadata'
         metadata_pub.publish(invalid_metadata)
@@ -523,7 +540,12 @@ class TestCameraNodes(unittest.TestCase):
             'camera output continued while metadata was invalid',
         )
         metadata_pub.publish(active_metadata)
-        time.sleep(0.4)
+        self._spin_until(
+            lambda: transform_counts.get(pinhole_tf_key, 0) >
+            first_pinhole_tf_count,
+            15.0,
+            'os_pinhole did not rebuild after valid metadata',
+        )
         publish_frame()
         self._spin_until(
             lambda: all(
