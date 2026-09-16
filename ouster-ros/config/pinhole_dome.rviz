@@ -1,0 +1,193 @@
+# SPDX-License-Identifier: BSD-3-Clause
+
+Panels:
+- Class: rviz_common/Displays
+  Name: Displays
+  Help Height: 90
+  Property Tree Widget:
+    Expanded:
+    - /Global Options1
+    - /Native cloud1
+    Splitter Ratio: 0.5
+- Class: rviz_common/Views
+  Name: Views
+Visualization Manager:
+  Class: ''
+  Name: root
+  Enabled: true
+  Value: true
+  Global Options:
+    Fixed Frame: os_lidar
+    Background Color: 30; 32; 38
+    Frame Rate: 30
+  Displays:
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Native cloud
+    Enabled: true
+    Value: true
+    Topic:
+      Value: /ouster/points
+      Depth: 5
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+    Position Transformer: XYZ
+    Color Transformer: Intensity
+    Channel Name: reflectivity
+    Autocompute Intensity Bounds: false
+    Min Intensity: 0
+    Max Intensity: 255
+    Use rainbow: true
+    Style: Points
+    Size (Pixels): 2
+    Alpha: 1
+    Decay Time: 0
+  - Class: rviz_default_plugins/TF
+    Name: Frames
+    Enabled: true
+    Value: true
+    Show Axes: true
+    Show Arrows: false
+    Show Names: false
+    Marker Scale: 0.3
+    Frames:
+      All Enabled: true
+  - Class: rviz_default_plugins/Camera
+    Name: Front
+    Enabled: true
+    Value: true
+    Topic:
+      Value: /ouster/panels/front/reflec_image
+      Depth: 5
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+    Image Rendering: background and overlay
+    Overlay Alpha: 0.85
+    Zoom Factor: 1
+    Far Plane Distance: 100
+    Normalize Range: false
+    Min Value: 0
+    Max Value: 65535
+    Median window: 5
+    Visibility:
+      Value: true
+      Native cloud: false
+      Frames: false
+  - Class: rviz_default_plugins/Camera
+    Name: Left
+    Enabled: true
+    Value: true
+    Topic:
+      Value: /ouster/panels/left/reflec_image
+      Depth: 5
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+    Image Rendering: background and overlay
+    Overlay Alpha: 0.85
+    Zoom Factor: 1
+    Far Plane Distance: 100
+    Normalize Range: false
+    Min Value: 0
+    Max Value: 65535
+    Median window: 5
+    Visibility:
+      Value: true
+      Native cloud: false
+      Frames: false
+  - Class: rviz_default_plugins/Camera
+    Name: Rear
+    Enabled: true
+    Value: true
+    Topic:
+      Value: /ouster/panels/rear/reflec_image
+      Depth: 5
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+    Image Rendering: background and overlay
+    Overlay Alpha: 0.85
+    Zoom Factor: 1
+    Far Plane Distance: 100
+    Normalize Range: false
+    Min Value: 0
+    Max Value: 65535
+    Median window: 5
+    Visibility:
+      Value: true
+      Native cloud: false
+      Frames: false
+  - Class: rviz_default_plugins/Camera
+    Name: Right
+    Enabled: true
+    Value: true
+    Topic:
+      Value: /ouster/panels/right/reflec_image
+      Depth: 5
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+    Image Rendering: background and overlay
+    Overlay Alpha: 0.85
+    Zoom Factor: 1
+    Far Plane Distance: 100
+    Normalize Range: false
+    Min Value: 0
+    Max Value: 65535
+    Median window: 5
+    Visibility:
+      Value: true
+      Native cloud: false
+      Frames: false
+  - Class: rviz_default_plugins/Camera
+    Name: Top
+    Enabled: true
+    Value: true
+    Topic:
+      Value: /ouster/panels/top/reflec_image
+      Depth: 5
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Durability Policy: Volatile
+    Image Rendering: background and overlay
+    Overlay Alpha: 0.85
+    Zoom Factor: 1
+    Far Plane Distance: 100
+    Normalize Range: false
+    Min Value: 0
+    Max Value: 65535
+    Median window: 5
+    Visibility:
+      Value: true
+      Native cloud: false
+      Frames: false
+  Tools:
+  - Class: rviz_default_plugins/Interact
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Select
+  - Class: rviz_default_plugins/FocusCamera
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      Distance: 12
+      Pitch: 0.55
+      Yaw: 0.75
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 2
+      Near Clip Distance: 0.01
+Window Geometry:
+  Width: 2200
+  Height: 1250
+  X: 80
+  Y: 80
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd00000003000000000000012c00000392fc0200000001fb000000100044006900730070006c0061007900730100000000000003920000001300ffffff000000010000022600000392fc0200000001fb000000060054006f00700100000000000003920000001300ffffff00000003000008980000014afc0100000004fb0000000a00460072006f006e00740100000000000002220000003400fffffffb00000008004c0065006600740100000228000002210000003400fffffffb000000080052006500610072010000044f000002220000003400fffffffb0000000a005200690067006800740100000677000002210000003400ffffff0000053a0000039200000004000000040000000800000008fc00000000

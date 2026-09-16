@@ -12,6 +12,7 @@
 #include "ouster_ros/os_ros.h"
 // clang-format on
 
+#include <algorithm>
 #include <chrono>
 
 #include "os_sensor_node.h"
@@ -1078,7 +1079,8 @@ void OusterSensor::create_publishers() {
         rclcpp::QoS(selected_qos).keep_last(lidar_packets_per_frame(info)));
     imu_packet_pub = create_publisher<PacketMsg>(
         "imu_packets",
-        rclcpp::QoS(selected_qos).keep_last(info.format.imu_packets_per_frame));
+        rclcpp::QoS(selected_qos).keep_last(
+            std::max<size_t>(1, info.format.imu_packets_per_frame)));
 }
 
 void OusterSensor::allocate_buffers() {

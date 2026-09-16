@@ -272,6 +272,17 @@ driver's 4 mm radial-range encoding and is not optical-axis depth; use
 `depth_image` with `depth_image_proc`. Dual-return profiles also publish
 `depth_image2`.
 
+To start a live sensor, the four panels, and their calibrated RViz camera
+displays together, run:
+
+```bash
+ros2 launch ouster_ros pinhole_sensor.launch.py \
+    sensor_hostname:=<sensor-ip> udp_dest:=<computer-ip>
+```
+
+The panel height adapts to the sensor's reported beam angles. Use the dome
+viewer below for an OSDome's additional upward coverage.
+
 The default panel names are relative to `os_lidar`, not to a vehicle or the
 sensor housing. Ouster defines lidar yaw 0 / native +X toward the external
 connector, with positive yaw counter-clockwise when viewed from above. Thus a
@@ -350,6 +361,24 @@ centre of a pinhole panel rather than at the singular edge of the side panels:
 ros2 launch ouster_ros pinhole.launch.py \
     params_file:="$(ros2 pkg prefix ouster_ros)/share/ouster_ros/config/os_pinhole_dome_params.yaml"
 ```
+
+To start a live OSDome with all five calibrated camera views and its native
+point cloud in RViz:
+
+```bash
+ros2 launch ouster_ros pinhole_dome.launch.py \
+    sensor_hostname:=<sensor-ip> udp_dest:=<computer-ip>
+```
+
+This viewer uses the `/ouster` namespace and the dome preset above, with five
+camera panes alongside the 3D cloud. Each Camera display subscribes to its
+panel's `reflec_image` and matching
+`camera_info`. To inspect another channel, change that display's Topic to the
+panel's `nearir_image`, `signal_image`, or `depth_image`. To check projection
+alignment, expand a camera's Visibility property and enable `Native cloud`.
+Pass `viz:=false` to start only the driver and pinhole node, or provide custom
+`params_file` and `rviz_config` paths. The launcher does not persist sensor
+configuration.
 
 The pinhole depth image is a calibrated nearest-neighbour resampling of the
 lidar returns, not an exact subset of the raw point cloud. Back-projecting it
