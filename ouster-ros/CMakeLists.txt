@@ -203,6 +203,12 @@ function(create_ros2_component
 endfunction()
 
 
+# All standalone drivers need to join ROS signal shutdown before their node is
+# destroyed. Component registration and container-managed lifetimes are kept
+# unchanged; only this package's executable entry-point template is replaced.
+set(rclcpp_components_NODE_TEMPLATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/node_main.cpp.in")
+
 # ==== os_sensor_component ====
 create_ros2_component(os_sensor_component
   "src/os_sensor_node_base.cpp;src/os_sensor_node.cpp"
@@ -313,6 +319,35 @@ if(BUILD_TESTING)
       LINK_LIBRARIES ouster_ros_library)
   endif()
   add_launch_test(test/camera_nodes_launch_test.py TIMEOUT 90)
+
+  # Exercise the same generated entry point as the installed executables.
+  # The fixture stays in the build tree; it is not a public driver component.
+  if(UNIX)
+    add_library(shutdown_probe_component SHARED test/shutdown_probe_component.cpp)
+    _ouster_link_ament_deps(shutdown_probe_component PUBLIC rclcpp rclcpp_components)
+    set(node ouster_shutdown_probe)
+    set(component "ouster_ros::test::ShutdownProbe")
+    set(executor SingleThreadedExecutor)
+    set(library_name "$<TARGET_FILE_NAME:shutdown_probe_component>")
+    configure_file(${rclcpp_components_NODE_TEMPLATE}
+      ${PROJECT_BINARY_DIR}/shutdown_probe.cpp.in)
+    file(GENERATE OUTPUT ${PROJECT_BINARY_DIR}/shutdown_probe.cpp
+      INPUT ${PROJECT_BINARY_DIR}/shutdown_probe.cpp.in)
+    add_executable(ouster_shutdown_probe ${PROJECT_BINARY_DIR}/shutdown_probe.cpp)
+    _ouster_link_ament_deps(ouster_shutdown_probe PRIVATE
+      rclcpp rclcpp_components class_loader)
+    add_dependencies(ouster_shutdown_probe shutdown_probe_component)
+    get_executable_path(_ouster_test_python Python3::Interpreter BUILD)
+    foreach(_signal SIGINT SIGTERM)
+      ament_add_test(standalone_shutdown_${_signal}
+        COMMAND "${_ouster_test_python}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/test/standalone_shutdown_test.py"
+          "$<TARGET_FILE:ouster_shutdown_probe>" "${_signal}"
+        APPEND_LIBRARY_DIRS "$<TARGET_FILE_DIR:shutdown_probe_component>"
+        GENERATE_RESULT_FOR_RETURN_CODE_ZERO
+        TIMEOUT 45)
+    endforeach()
+  endif()
   set(CMAKE_MODULE_PATH "${_ouster_ros_saved_cmake_module_path}")
 endif()
 
