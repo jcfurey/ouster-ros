@@ -146,7 +146,7 @@ class LidarPacketHandler {
             }
         }
 
-        // initalize time handlers
+        // initialize time handlers
         scan_col_ts_spacing_ns = compute_scan_col_ts_spacing_ns(info);
         compute_scan_ts = [this](const auto& ts_v) {
             return compute_scan_ts_0(ts_v);

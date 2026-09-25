@@ -42,7 +42,7 @@ bool is_legacy_lidar_profile(const ouster::sdk::core::SensorInfo& info);
 
 
 /**
- * Gets the number beams based on supplied sensor_info
+ * Gets the number of beams based on supplied sensor_info
  * @param[in] info sensor_info
  * @return number of beams a sensor has
  */
@@ -77,8 +77,8 @@ std::vector<sensor_msgs::msg::Imu> packet_to_imu_msgs(
     const ouster::sdk::core::SensorInfo& sensor_info);
 
 /**
- * Convert transformation matrix return by sensor to ROS transform
- * @param[in] mat transformation matrix return by sensor
+ * Convert transformation matrix returned by sensor to ROS transform
+ * @param[in] mat transformation matrix returned by sensor
  * @param[in] frame the parent frame of the published transform
  * @param[in] child_frame the child frame of the published transform
  * @param[in] timestamp value to set as the timestamp of the generated
@@ -91,12 +91,13 @@ geometry_msgs::msg::TransformStamped transform_to_tf_msg(
 
 
 /**
- * Convert transformation matrix return by sensor to ROS transform
+ * Convert transformation matrix returned by sensor to ROS transform
  * @param[in] ls lidar scan object
  * @param[in] timestamp value to set as the timestamp of the generated
  * @param[in] frame the parent frame of the generated laser scan message
  * @param[in] lidar_mode lidar mode (width x frequency)
  * @param[in] ring selected ring to be published
+ * @param[in] nan_is_inf whether NaN measurements should be reported as +inf
  * @param[in] pixel_shift_by_row pixel shifts by row
  * @param[in] return_index index of return desired starting at 0
  * @return ROS message suitable for publishing as a LaserScan
@@ -106,7 +107,8 @@ sensor_msgs::msg::LaserScan lidar_scan_to_laser_scan_msg(
     const rclcpp::Time& timestamp,
     const std::string &frame,
     const ouster::sdk::core::LidarMode lidar_mode,
-    const uint16_t ring, const std::vector<int>& pixel_shift_by_row,
+    const uint16_t ring, bool nan_is_inf,
+    const std::vector<int>& pixel_shift_by_row,
     const int return_index);
 
 /**
