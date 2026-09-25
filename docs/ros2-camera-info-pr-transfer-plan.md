@@ -9,6 +9,28 @@ heads before carrying out the commands below.
 This document is for the `cam-wip` branch only. It is not part of the proposed
 camera PR transfer set.
 
+## Follow-up — 2026-09-24: standalone shutdown race
+
+Commit `8142673` (`fix(ros2): finish signal shutdown before destroying
+standalone nodes`) should likely also be carried onto `pr/ros2-camera-info`
+for PR #564. The PR remains open; its source head was verified as `7ee1840`
+on 2026-09-24. The branch snapshots and completed-transfer instructions below
+remain historical and must not be replayed without checking current ancestry.
+
+The fix prevents ROS signal-thread logging cleanup from racing with node
+destruction. It was reproduced in `os_pinhole` with both full and cropped
+CameraInfo panels. See [the diagnosis and validation](shutdown-race.md).
+
+Transfer the focused fix commit, including the executable template, CMake
+wiring and SIGINT/SIGTERM regression tests. It changes the entry point for all
+standalone driver executables, so validate the camera PR's supported ROS/RMW
+matrix before updating that branch. Shared component containers retain their
+own shutdown lifetimes. Avoid merging unrelated `cam-wip` work into the PR.
+
+This handoff note is a separate `cam-wip` documentation commit; it is not part
+of the proposed transfer. Publishing the fix to `cam-wip` does not update the
+camera PR branch.
+
 ## Current state
 
 - Tested camera implementation tip on `cam-wip`: `e8ec0a5`
