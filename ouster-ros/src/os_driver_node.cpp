@@ -91,8 +91,11 @@ class OusterDriver : public OusterSensor {
             get_parameter("ptp_utc_tai_offset").as_double();
 
         if (impl::check_token(tokens, "IMU")) {
-            imu_pub =
-                create_publisher<sensor_msgs::msg::Imu>("imu", selected_qos);
+            rclcpp::PublisherOptions imu_pub_options;
+            imu_pub_options.qos_overriding_options =
+                rclcpp::QosOverridingOptions::with_default_policies();
+            imu_pub = create_publisher<sensor_msgs::msg::Imu>(
+                "imu", selected_qos, imu_pub_options);
             imu_packet_handler = ImuPacketHandler::create(
                 info, tf_bcast.imu_frame_id(), timestamp_mode,
                 static_cast<int64_t>(ptp_utc_tai_offset * 1e+9));
