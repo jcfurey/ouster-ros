@@ -412,12 +412,21 @@ class TestCameraNodes(unittest.TestCase):
         self.assertEqual(64, len(payloads))
         self.assertEqual({8448}, {len(payload) for payload in payloads})
 
-        def publish_frame():
+        def publish_frame(padding=b''):
             for payload in payloads:
                 packet = PacketMsg()
-                packet.buf = payload
+                packet.buf = payload + padding
                 packet_pub.publish(packet)
                 time.sleep(0.002)
+
+        # A complete frame of oversized packets (another profile's size, or a
+        # mismatched metadata file) must be rejected, not truncated and decoded.
+        publish_frame(padding=bytes(8))
+        quiet_deadline = time.monotonic() + 0.6
+        while time.monotonic() < quiet_deadline:
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+        self.assertFalse(
+            received, 'oversized packets produced camera output')
 
         publish_frame()
 

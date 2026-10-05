@@ -172,11 +172,11 @@ class OusterCloud : public OusterProcessingNodeBase {
                         return;
                     }
                     const size_t expected_size = packet_format->imu_packet_size;
-                    if (msg->buf.size() < expected_size) {
+                    if (msg->buf.size() != expected_size) {
                         RCLCPP_WARN_STREAM_THROTTLE(
                             get_logger(), *get_clock(), 1000,
-                            "dropping undersized imu_packets msg ("
-                                << msg->buf.size() << " < " << expected_size
+                            "dropping imu_packets msg of unexpected size ("
+                                << msg->buf.size() << " != " << expected_size
                                 << " bytes)");
                         return;
                     }
@@ -318,11 +318,11 @@ class OusterCloud : public OusterProcessingNodeBase {
                         return;
                     }
                     const size_t expected_size = packet_format->lidar_packet_size;
-                    if (msg->buf.size() < expected_size) {
+                    if (msg->buf.size() != expected_size) {
                         RCLCPP_WARN_STREAM_THROTTLE(
                             get_logger(), *get_clock(), 1000,
-                            "dropping undersized lidar_packets msg ("
-                                << msg->buf.size() << " < " << expected_size
+                            "dropping lidar_packets msg of unexpected size ("
+                                << msg->buf.size() << " != " << expected_size
                                 << " bytes)");
                         return;
                     }
