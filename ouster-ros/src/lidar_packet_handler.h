@@ -351,6 +351,21 @@ class LidarPacketHandler {
             return extrapolate_value(curr_scan_first_nonzero_idx,
                                      curr_scan_first_nonzero_value);
         }
+        // Interpolating across the frame boundary assumes the two scans are
+        // consecutive. After a lost frame or a clock step the implied column
+        // spacing departs from nominal, so extrapolate within this scan.
+        const int columns = scan_width + curr_scan_first_nonzero_idx -
+                            last_scan_last_nonzero_idx;
+        if (scan_col_ts_spacing_ns > 0.0 &&
+            (curr_scan_first_nonzero_value <= last_scan_last_nonzero_value ||
+             std::abs(static_cast<double>(curr_scan_first_nonzero_value -
+                                          last_scan_last_nonzero_value) /
+                          columns -
+                      scan_col_ts_spacing_ns) >
+                 0.25 * scan_col_ts_spacing_ns)) {
+            return extrapolate_value(curr_scan_first_nonzero_idx,
+                                     curr_scan_first_nonzero_value);
+        }
         return linear_interpolate(
             last_scan_last_nonzero_idx, last_scan_last_nonzero_value,
             scan_width + curr_scan_first_nonzero_idx,

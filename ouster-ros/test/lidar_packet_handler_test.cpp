@@ -186,3 +186,96 @@ TEST_F(LidarPacketHandlerRosTimeTest, BurstNearClockStartClampsToZero) {
 }
 
 }  // namespace
+
+namespace {
+
+// Sensor-time scans missing their leading packets impute column 0 from the
+// previous scan only when the two scans are consecutive.
+class LidarPacketHandlerSensorTimeTest : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        info = ouster::sdk::core::default_sensor_info(
+            ouster::sdk::core::LidarMode::_512x10);
+        info.format.columns_per_frame = 32;
+        info.format.columns_per_packet = 16;
+        info.format.column_window = {0, 31};
+        handler = ouster_ros::LidarPacketHandler::create(
+            info,
+            {[this](const ouster::sdk::core::LidarScan& scan, uint64_t scan_ts,
+                    const rclcpp::Time&) {
+                std::lock_guard<std::mutex> lock(mutex);
+                stamps[scan.frame_id] = scan_ts;
+                ready.notify_all();
+            }},
+            "TIME_FROM_INTERNAL_OSC", 0, 0.0f);
+    }
+
+    static uint64_t column_time(uint32_t frame, int column) {
+        return static_cast<uint64_t>(
+            10'000'000'000LL +
+            (static_cast<int64_t>(frame) - 41) * 100'000'000LL +
+            column * 3'125'000LL);
+    }
+
+    void send(uint32_t frame, int first_column) {
+        const ouster::sdk::core::impl::PacketWriter writer{
+            ouster::sdk::core::get_format(info)};
+        ouster::sdk::core::LidarPacket packet(writer.lidar_packet_size);
+        writer.set_frame_id(packet.buf.data(), frame);
+        for (int i = 0; i < writer.columns_per_packet; ++i) {
+            auto* column = writer.nth_col(i, packet.buf.data());
+            writer.set_col_measurement_id(column, first_column + i);
+            writer.set_col_status(column, 1);
+            writer.set_col_timestamp(column,
+                                     column_time(frame, first_column + i));
+        }
+        handler(packet);
+    }
+
+    void expect_stamp(uint32_t frame, uint64_t expected_ns) {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(ready.wait_for(lock, std::chrono::seconds(5), [&] {
+            return stamps.count(frame) != 0;
+        })) << "No completed scan for frame " << frame;
+        EXPECT_EQ(stamps.at(frame), expected_ns);
+    }
+
+    ouster::sdk::core::SensorInfo info;
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::map<uint32_t, uint64_t> stamps;
+    ouster_ros::LidarPacketHandler::HandlerType handler;
+};
+
+TEST_F(LidarPacketHandlerSensorTimeTest, ConsecutiveScanImputesColumnZero) {
+    send(41, 0);
+    send(41, 16);
+    send(42, 16);
+    send(43, 0);
+
+    expect_stamp(41, column_time(41, 0));
+    expect_stamp(42, column_time(42, 0));
+}
+
+TEST_F(LidarPacketHandlerSensorTimeTest, LostFrameDoesNotSkewImputedStart) {
+    send(41, 0);
+    send(41, 16);
+    // Frame 42 is lost; frame 43 also misses its leading packet.
+    send(43, 16);
+    send(44, 0);
+
+    expect_stamp(41, column_time(41, 0));
+    expect_stamp(43, column_time(43, 0));
+}
+
+TEST_F(LidarPacketHandlerSensorTimeTest, ClockStepDoesNotSkewImputedStart) {
+    send(41, 0);
+    send(41, 16);
+    // A sensor time reset moves the next frame backwards in time.
+    send(3, 16);
+    send(4, 0);
+
+    expect_stamp(3, column_time(3, 0));
+}
+
+}  // namespace
