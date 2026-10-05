@@ -61,8 +61,9 @@ constexpr auto make_lidar_scan_tuple() {
 /**
  * @brief maps the fields of a LidarScan object to the elements of the supplied
  * tuple in the same order. WINDOW is optional because the SDK omits it from
- * scans produced by firmware older than 3.2. A null tuple entry represents
- * that missing field.
+ * scans produced by firmware older than 3.2. R_U8/G_U8/B_U8 are optional
+ * because the packet handler only tone-maps RGB profiles when the configured
+ * output consumes colour. A null tuple entry represents that missing field.
  */
 template <std::size_t Index, std::size_t N, const ChanFieldTable<N>& Table,
           typename Tuple>
@@ -77,10 +78,13 @@ void map_lidar_scan_fields_to_tuple(Tuple& tp, const ouster::sdk::core::LidarSca
         static_assert(std::is_same_v<ElementType, FieldType>,
                       "tuple element, field element types mismatch!");
         const auto field_name = Table[Index].first;
-        const bool missing_optional_window =
-            std::string_view{field_name} == ChanField::WINDOW &&
-            !ls.has_field(field_name);
-        std::get<Index>(tp) = missing_optional_window
+        const std::string_view name{field_name};
+        const bool optional_field =
+            name == ChanField::WINDOW || name == ChanField::R_U8 ||
+            name == ChanField::G_U8 || name == ChanField::B_U8;
+        const bool missing_optional_field =
+            optional_field && !ls.has_field(field_name);
+        std::get<Index>(tp) = missing_optional_field
                                   ? nullptr
                                   : ls.field<FieldType>(field_name).data();
         map_lidar_scan_fields_to_tuple<Index + 1, N, Table>(tp, ls);

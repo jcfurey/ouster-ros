@@ -172,8 +172,12 @@ class LidarPacketHandler {
         lidar_packet_accumlator = LidarPacketAccumlator{
             [this, pf, lidar_handler](const ouster::sdk::core::LidarPacket& lidar_packet) {
                 if (ring_buffer.full()) {
-                    RCLCPP_WARN(rclcpp::get_logger(getName()),
-                                "lidar_scans full, DROPPING PACKET");
+                    // Throttled: a stalled consumer would otherwise log once
+                    // per packet (over a thousand times per second).
+                    static rclcpp::Clock steady_clock(RCL_STEADY_TIME);
+                    RCLCPP_WARN_THROTTLE(rclcpp::get_logger(getName()),
+                                         steady_clock, 1000,
+                                         "lidar_scans full, DROPPING PACKET");
                     return false;
                 }
                 bool result = false;
@@ -312,7 +316,17 @@ class LidarPacketHandler {
         }
 
         for (const auto& h : lidar_scan_handlers) {
-            h(ls, lidar_scan_slot_ts[slot], lidar_scan_slot_msg_ts[slot]);
+            // An exception escaping this worker thread would terminate the
+            // whole process (and every component sharing its container).
+            try {
+                h(ls, lidar_scan_slot_ts[slot], lidar_scan_slot_msg_ts[slot]);
+            } catch (const std::exception& e) {
+                static rclcpp::Clock steady_clock(RCL_STEADY_TIME);
+                RCLCPP_ERROR_THROTTLE(rclcpp::get_logger(getName()),
+                                      steady_clock, 1000,
+                                      "lidar scan processing failed: %s",
+                                      e.what());
+            }
         }
 
         {
