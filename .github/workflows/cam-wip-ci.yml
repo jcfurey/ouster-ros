@@ -1,0 +1,71 @@
+name: cam-wip CI
+
+# Upstream's docker-image.yml only runs for the ros2 branch. This workflow
+# builds and tests this fork's cam-wip line (and its working branches), which
+# the downstream simulators pin.
+on:
+  push:
+    branches:
+      - cam-wip
+      - 'claude/**'
+  pull_request:
+    branches:
+      - cam-wip
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build + test (${{ matrix.ros_distro }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        ros_distro: [jazzy]
+    container:
+      image: ros:${{ matrix.ros_distro }}-ros-base
+    steps:
+      # Without git in the image, actions/checkout falls back to a tarball and
+      # cannot fetch the ouster-sdk submodule.
+      - name: Install git
+        run: apt-get update -qq && apt-get install -y -qq git
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
+      - uses: actions/checkout@v4
+        with:
+          path: src/ouster-ros
+          submodules: recursive
+
+      - name: Resolve system dependencies via rosdep
+        run: |
+          apt-get update -qq
+          rosdep update --rosdistro=${ROS_DISTRO}
+          rosdep install --from-paths src --rosdistro=${ROS_DISTRO} -y --ignore-src
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
+      - name: Build
+        shell: bash
+        run: |
+          source /opt/ros/${ROS_DISTRO}/setup.bash
+          colcon build --event-handlers console_cohesion- \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+
+      - name: Test
+        shell: bash
+        run: |
+          source /opt/ros/${ROS_DISTRO}/setup.bash
+          source install/setup.bash
+          colcon test --event-handlers console_cohesion-
+          colcon test-result --verbose
+          # The gtest target is only created when GTest is found; fail rather
+          # than pass on the launch tests alone if it was silently skipped.
+          test -f build/ouster_ros/test_results/ouster_ros/ouster_ros_test.gtest.xml
