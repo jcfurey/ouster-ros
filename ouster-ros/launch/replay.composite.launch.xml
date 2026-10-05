@@ -131,6 +131,8 @@
         <param name="metadata" value="$(var metadata)"/>
       </composable_node>
       <composable_node pkg="ouster_ros" plugin="ouster_ros::OusterImage" name="os_image">
+        <param name="timestamp_mode" value="$(var timestamp_mode)"/>
+        <param name="ptp_utc_tai_offset" value="$(var ptp_utc_tai_offset)"/>
         <param name="use_system_default_qos" value="$(var use_system_default_qos)"/>
         <param name="proc_mask" value="$(var proc_mask)"/>
         <param name="mask_path" value="$(var mask_path)"/>
