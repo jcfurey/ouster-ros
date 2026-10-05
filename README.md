@@ -261,6 +261,14 @@ With a sensor or replay already publishing `metadata` and `lidar_packets`, run:
 ros2 launch ouster_ros pinhole.launch.py
 ```
 
+Pass the producing stream's time domain so panels and clouds share stamps.
+`replay.composite.launch.xml` defaults to ROS time on the bag's `/clock`:
+
+```bash
+ros2 launch ouster_ros pinhole.launch.py \
+    timestamp_mode:=TIME_FROM_ROS_TIME use_sim_time:=true
+```
+
 Copy `config/os_pinhole_params.yaml` for application-specific settings and pass
 it as `params_file:=<path>`. The file is namespace-agnostic, so the same panel
 configuration also works with `ouster_ns:=<namespace>`.

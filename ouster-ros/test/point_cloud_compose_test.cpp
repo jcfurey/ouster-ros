@@ -400,3 +400,41 @@ TEST_F(PointCloudComposeTest, PointCloudProcessorRejectsPixelShiftSizeMismatch) 
     info.format.pixel_shift_by_row.pop_back();
     EXPECT_THROW(make_processor(info), std::invalid_argument);
 }
+
+// The drivers only tone-map RGB into R_U8/G_U8/B_U8 when the configured point
+// type consumes colour. Every other point type must still process RGB-profile
+// scans, whose profile tables name those channels.
+TEST_F(PointCloudComposeTest, RgbProfilesWithoutToneMappedColorStillProcess) {
+    for (const auto& [profile, returns] :
+         {std::pair{UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16, 1U},
+          std::pair{UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_RGB16_DUAL, 2U}}) {
+        const auto info = make_sensor_info(profile);
+        for (const char* point_type :
+             {"original", "xyz", "xyzi", "o_xyzi", "xyzir"}) {
+            SCOPED_TRACE(point_type);
+            ASSERT_FALSE(
+                PointCloudProcessorFactory::point_type_produces_color(
+                    point_type));
+            LidarScan scan(info);
+            ASSERT_FALSE(scan.has_field(ChanField::R_U8));
+            scan.field<uint32_t>(ChanField::RANGE).setConstant(1000U);
+            if (scan.has_field(ChanField::RANGE2)) {
+                scan.field<uint32_t>(ChanField::RANGE2).setConstant(2000U);
+            }
+
+            PointCloudProcessor_OutputType output;
+            auto processor =
+                PointCloudProcessorFactory::create_point_cloud_processor(
+                    point_type, info, "os_lidar", false, true, false, 0U,
+                    200000U, 1, "",
+                    [&](auto messages) { output = std::move(messages); });
+            ASSERT_NO_THROW(
+                processor(scan, 0U, rclcpp::Time(0, 0, RCL_ROS_TIME)));
+            ASSERT_EQ(output.size(), returns);
+            for (const auto& message : output) {
+                EXPECT_EQ(message->width * message->height,
+                          TEST_WIDTH * TEST_HEIGHT);
+            }
+        }
+    }
+}

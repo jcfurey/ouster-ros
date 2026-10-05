@@ -30,9 +30,28 @@ class ImuPacketHandler {
         using Timestamper = std::function<rclcpp::Time(const ouster::sdk::core::ImuPacket&)>;
         Timestamper timestamper;
         if (timestamp_mode == "TIME_FROM_ROS_TIME") {
+            // A packet leaves the sensor after its last sample, so arrival
+            // time anchors the last valid sample. The returned base stamps
+            // sample 0, which packet_to_imu_msgs then offsets by sensor-clock
+            // spacing; anchoring sample 0 instead would stamp the rest of a
+            // multi-sample packet in the future.
             timestamper = Timestamper{
-                [](const ouster::sdk::core::ImuPacket& imu_packet) {
-                    return rclcpp::Time(imu_packet.host_timestamp);
+                [info](const ouster::sdk::core::ImuPacket& imu_packet) {
+                    const auto status = imu_packet.status();
+                    const auto sample_ts =
+                        imu_sample_timestamps(imu_packet, info);
+                    uint64_t span = 0;
+                    for (auto i = sample_ts.size() - 1; i > 0; --i) {
+                        if (i < status.size() && (status[i] & 0x1) != 0) {
+                            if (sample_ts[i] > sample_ts[0]) {
+                                span = sample_ts[i] - sample_ts[0];
+                            }
+                            break;
+                        }
+                    }
+                    const uint64_t host = imu_packet.host_timestamp;
+                    return rclcpp::Time(
+                        static_cast<int64_t>(host > span ? host - span : 0));
                 }};
         } else if (timestamp_mode == "TIME_FROM_PTP_1588") {
             timestamper = Timestamper{

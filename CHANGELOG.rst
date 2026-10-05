@@ -10,6 +10,22 @@ Changelog
 * [BUGFIX]: ``TIME_FROM_ROS_TIME`` stamped every point cloud one full frame period early
   (regression since the count-based scan completion in 0.14.0); stamps are now derived
   from the scan's own packet arrival times.
+* [BUGFIX]: RGB profiles (``RNG19_RFL8_SIG16_NIR16_RGB16[_DUAL]``) terminated ``os_cloud``/``os_driver``
+  for point types without colour (``original``, ``xyz``, ``xyzi``, ``o_xyzi``, ``xyzir``); tone-mapped
+  colour channels are now optional and a failing scan processor no longer terminates the process.
+* [BUGFIX]: LaserScan rays were one ``angle_increment`` short of their azimuth, ``angle_max`` described
+  ``w + 1`` rays, and firmware that offsets ``pixel_shift_by_row`` (2.x) biased every ray by several
+  degrees. Rays now lie at the selected ring's calibrated azimuth.
+* [BUGFIX]: ``TIME_FROM_ROS_TIME`` stamped samples of multi-sample IMU packets after the packet arrived;
+  the last valid sample is now anchored to the arrival time.
+* [BUGFIX]: a scan missing its leading packets imputed column-0 time across a lost frame or a sensor
+  clock step; it now extrapolates within the scan unless the previous scan is consecutive.
+* [BUGFIX]: ``os_image`` in the composite record/replay launches ignored ``timestamp_mode``, so images
+  and clouds were stamped in different time domains during bag replay. ``pinhole.launch.py`` accepts
+  ``timestamp_mode``, ``ptp_utc_tai_offset`` and ``use_sim_time``.
+* Packet subscribers and pcap replay drop packets whose size differs from the metadata's packet size
+  instead of decoding a truncated prefix; pcap replay handles a shared lidar/IMU port.
+* Throttle the ``lidar_scans full, DROPPING PACKET`` warning.
 
 ouster_ros v0.15.2
 ==================

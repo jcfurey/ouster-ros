@@ -60,12 +60,9 @@ std::string topic_for_return(const std::string& base, int idx) {
     return idx == 0 ? base : base + std::to_string(idx + 1);
 }
 
-std::vector<sensor_msgs::msg::Imu> packet_to_imu_msgs(
+Eigen::ArrayX<uint64_t> imu_sample_timestamps(
     const ouster::sdk::core::ImuPacket& imu_packet,
-    const std::string& frame,
-    const rclcpp::Time& timestamp,
     const ouster::sdk::core::SensorInfo& sensor_info) {
-
     Eigen::ArrayX<uint16_t> imu_status = imu_packet.status();
 
     auto& pf = *imu_packet.format;
@@ -85,6 +82,19 @@ std::vector<sensor_msgs::msg::Imu> packet_to_imu_msgs(
             }
         }
     }
+
+    return imu_timestamps;
+}
+
+std::vector<sensor_msgs::msg::Imu> packet_to_imu_msgs(
+    const ouster::sdk::core::ImuPacket& imu_packet,
+    const std::string& frame,
+    const rclcpp::Time& timestamp,
+    const ouster::sdk::core::SensorInfo& sensor_info) {
+
+    Eigen::ArrayX<uint16_t> imu_status = imu_packet.status();
+    const Eigen::ArrayX<uint64_t> imu_timestamps =
+        imu_sample_timestamps(imu_packet, sensor_info);
 
     Eigen::ArrayX3f accel = imu_packet.accel();
     Eigen::ArrayX3f gyro = imu_packet.gyro();
@@ -222,12 +232,35 @@ geometry_msgs::msg::TransformStamped transform_to_tf_msg(
 }
 
 // TODO: provide a method that accepts sensor_msgs::msg::LaserScan object
+double laser_scan_azimuth_correction(const std::vector<int>& pixel_shift_by_row,
+                                     const std::vector<double>& beam_azimuth_deg,
+                                     uint16_t ring, uint32_t columns_per_frame) {
+    if (columns_per_frame == 0 || ring >= pixel_shift_by_row.size() ||
+        ring >= beam_azimuth_deg.size() ||
+        !std::isfinite(beam_azimuth_deg[ring])) {
+        return 0.0;
+    }
+    return 2.0 * M_PI * pixel_shift_by_row[ring] / columns_per_frame -
+           beam_azimuth_deg[ring] * M_PI / 180.0;
+}
+
 sensor_msgs::msg::LaserScan lidar_scan_to_laser_scan_msg(
     const LidarScan& ls, const rclcpp::Time& timestamp,
     const std::string& frame, const LidarMode ld_mode,
     const uint16_t ring, bool nan_is_inf,
     const std::vector<int>& pixel_shift_by_row,
     const int return_index) {
+    return lidar_scan_to_laser_scan_msg(ls, timestamp, frame, ld_mode, ring,
+                                        nan_is_inf, pixel_shift_by_row,
+                                        return_index, 0.0);
+}
+
+sensor_msgs::msg::LaserScan lidar_scan_to_laser_scan_msg(
+    const LidarScan& ls, const rclcpp::Time& timestamp,
+    const std::string& frame, const LidarMode ld_mode,
+    const uint16_t ring, bool nan_is_inf,
+    const std::vector<int>& pixel_shift_by_row,
+    const int return_index, double azimuth_correction_rad) {
     sensor_msgs::msg::LaserScan msg;
     msg.header.stamp = timestamp;
     msg.header.frame_id = frame;
@@ -267,10 +300,26 @@ sensor_msgs::msg::LaserScan lidar_scan_to_laser_scan_msg(
         static_cast<size_t>(u) >= static_cast<size_t>(ls.h)) {
         return msg;
     }
-    for (int v =  0; v < static_cast<int>(ls.w); ++v) {
-        auto v_shift = (v + ls.w - pixel_shift_by_row[u] + ls.w / 2) % ls.w;
-        auto src_idx = u * ls.w + v_shift;
-        auto tgt_idx = ls.w - 1 - v;
+    // Destaggered column v + w/2 lies at azimuth pi - 2*pi*v/w (+X is column
+    // 0 and azimuth decreases with measurement id), plus the ring's residual
+    // correction. Whole increments of that correction rotate the ray order and
+    // the remainder offsets angle_min, so angle_min stays within half an
+    // increment of -pi and ray i lies exactly at angle_min + i * increment.
+    const int w = static_cast<int>(ls.w);
+    int rotation = 0;
+    if (w > 0 && std::isfinite(azimuth_correction_rad)) {
+        const double increment = 2.0 * M_PI / w;
+        rotation = static_cast<int>(
+            std::lround(azimuth_correction_rad / increment));
+        msg.angle_min = static_cast<float>(
+            -M_PI + (azimuth_correction_rad - rotation * increment));
+        msg.angle_max = static_cast<float>(msg.angle_min + (w - 1) * increment);
+        rotation = ((rotation % w) + w) % w;
+    }
+    for (int v =  0; v < w; ++v) {
+        auto v_shift = (v + w - pixel_shift_by_row[u] + w / 2) % w;
+        auto src_idx = u * w + v_shift;
+        auto tgt_idx = (w - v + rotation) % w;
 
         float r = rg[src_idx] * ouster::sdk::core::RANGE_UNIT;
         if (rg[src_idx] == 0) {

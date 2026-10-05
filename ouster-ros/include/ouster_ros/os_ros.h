@@ -63,6 +63,19 @@ std::string topic_for_return(const std::string& topic_base, int return_idx);
 size_t lidar_packets_per_frame(const ouster::sdk::core::SensorInfo& info);
 
 /**
+ * Sensor-clock time of each IMU sample in a packet, as packet_to_imu_msgs
+ * stamps them relative to one another. LEGACY packets carry one sample timed
+ * by the gyro clock; a modern packet whose first sample is invalid gets a
+ * nominal cadence derived from the frame rate.
+ * @param[in] imu_packet the raw IMU packet
+ * @param[in] sensor_info the sensor information
+ * @return one sensor-clock timestamp per packet sample
+ */
+Eigen::ArrayX<uint64_t> imu_sample_timestamps(
+    const ouster::sdk::core::ImuPacket& imu_packet,
+    const ouster::sdk::core::SensorInfo& sensor_info);
+
+/**
  * Parse an imu packet message into a ROS imu message
  * @param[in] imu_packet the raw IMU packet populated by read_imu_packet
  * @param[in] timestamp the timestamp to give the resulting ROS message
@@ -110,6 +123,33 @@ sensor_msgs::msg::LaserScan lidar_scan_to_laser_scan_msg(
     const uint16_t ring, bool nan_is_inf,
     const std::vector<int>& pixel_shift_by_row,
     const int return_index);
+
+/**
+ * As above, additionally rotating the scan by the residual azimuth of the
+ * selected ring that destaggering leaves uncorrected.
+ * @param[in] azimuth_correction_rad true azimuth minus the destaggered column
+ * azimuth for the ring, i.e. 2*pi*pixel_shift/w - beam_azimuth (radians)
+ * @remark see laser_scan_azimuth_correction()
+ */
+sensor_msgs::msg::LaserScan lidar_scan_to_laser_scan_msg(
+    const ouster::sdk::core::LidarScan& ls,
+    const rclcpp::Time& timestamp,
+    const std::string &frame,
+    const ouster::sdk::core::LidarMode lidar_mode,
+    const uint16_t ring, bool nan_is_inf,
+    const std::vector<int>& pixel_shift_by_row,
+    const int return_index,
+    double azimuth_correction_rad);
+
+/**
+ * Residual azimuth of a destaggered ring: destaggering by pixel_shift_by_row
+ * approximates the ring's calibrated beam azimuth to whole columns, and some
+ * firmware releases offset every shift by a constant.
+ * @return azimuth correction in radians, or 0 when the ring is out of range
+ */
+double laser_scan_azimuth_correction(const std::vector<int>& pixel_shift_by_row,
+                                     const std::vector<double>& beam_azimuth_deg,
+                                     uint16_t ring, uint32_t columns_per_frame);
 
 /**
  * Parse a LidarPacket and generate the Telemetry message

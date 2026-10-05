@@ -293,30 +293,27 @@ class OusterPcap : public OusterSensorNodeBase {
         while (rclcpp::ok() && packet_read_active && payload_size) {
             ++packet_count;
             auto start = steady_clock::now();
-            if (packet_info.dst_port == info.config.udp_port_imu) {
-                if (payload_size >= pf.imu_packet_size) {
-                    std::memcpy(imu_packet.buf.data(), pcap.current_data(),
-                                pf.imu_packet_size);
-                    imu_packet_pub->publish(imu_packet);
-                } else {
-                    RCLCPP_WARN_STREAM_THROTTLE(
-                        get_logger(), *get_clock(), 1000,
-                        "skipping truncated imu packet: payload "
-                            << payload_size << " < expected "
-                            << pf.imu_packet_size);
-                }
-            } else if (packet_info.dst_port == info.config.udp_port_lidar) {
-                if (payload_size >= pf.lidar_packet_size) {
-                    std::memcpy(lidar_packet.buf.data(), pcap.current_data(),
-                                pf.lidar_packet_size);
-                    lidar_packet_pub->publish(lidar_packet);
-                } else {
-                    RCLCPP_WARN_STREAM_THROTTLE(
-                        get_logger(), *get_clock(), 1000,
-                        "skipping truncated lidar packet: payload "
-                            << payload_size << " < expected "
-                            << pf.lidar_packet_size);
-                }
+            // Classify by port and exact size: a sensor configured with one
+            // shared port sends both packet types to it, and a payload of any
+            // other size belongs to a different profile or metadata.
+            const bool imu_port = packet_info.dst_port == info.config.udp_port_imu;
+            const bool lidar_port =
+                packet_info.dst_port == info.config.udp_port_lidar;
+            if (imu_port && payload_size == pf.imu_packet_size) {
+                std::memcpy(imu_packet.buf.data(), pcap.current_data(),
+                            pf.imu_packet_size);
+                imu_packet_pub->publish(imu_packet);
+            } else if (lidar_port && payload_size == pf.lidar_packet_size) {
+                std::memcpy(lidar_packet.buf.data(), pcap.current_data(),
+                            pf.lidar_packet_size);
+                lidar_packet_pub->publish(lidar_packet);
+            } else if (imu_port || lidar_port) {
+                RCLCPP_WARN_STREAM_THROTTLE(
+                    get_logger(), *get_clock(), 1000,
+                    "skipping packet of unexpected size " << payload_size
+                        << " on port " << packet_info.dst_port
+                        << " (expected lidar " << pf.lidar_packet_size
+                        << " or imu " << pf.imu_packet_size << ")");
             } else {
                 RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1000,
                     "unknown packet /w port:" << packet_info.dst_port);
