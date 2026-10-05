@@ -60,12 +60,9 @@ std::string topic_for_return(const std::string& base, int idx) {
     return idx == 0 ? base : base + std::to_string(idx + 1);
 }
 
-std::vector<sensor_msgs::msg::Imu> packet_to_imu_msgs(
+Eigen::ArrayX<uint64_t> imu_sample_timestamps(
     const ouster::sdk::core::ImuPacket& imu_packet,
-    const std::string& frame,
-    const rclcpp::Time& timestamp,
     const ouster::sdk::core::SensorInfo& sensor_info) {
-
     Eigen::ArrayX<uint16_t> imu_status = imu_packet.status();
 
     auto& pf = *imu_packet.format;
@@ -85,6 +82,19 @@ std::vector<sensor_msgs::msg::Imu> packet_to_imu_msgs(
             }
         }
     }
+
+    return imu_timestamps;
+}
+
+std::vector<sensor_msgs::msg::Imu> packet_to_imu_msgs(
+    const ouster::sdk::core::ImuPacket& imu_packet,
+    const std::string& frame,
+    const rclcpp::Time& timestamp,
+    const ouster::sdk::core::SensorInfo& sensor_info) {
+
+    Eigen::ArrayX<uint16_t> imu_status = imu_packet.status();
+    const Eigen::ArrayX<uint64_t> imu_timestamps =
+        imu_sample_timestamps(imu_packet, sensor_info);
 
     Eigen::ArrayX3f accel = imu_packet.accel();
     Eigen::ArrayX3f gyro = imu_packet.gyro();

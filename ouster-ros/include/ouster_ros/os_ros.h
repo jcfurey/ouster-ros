@@ -63,6 +63,19 @@ std::string topic_for_return(const std::string& topic_base, int return_idx);
 size_t lidar_packets_per_frame(const ouster::sdk::core::SensorInfo& info);
 
 /**
+ * Sensor-clock time of each IMU sample in a packet, as packet_to_imu_msgs
+ * stamps them relative to one another. LEGACY packets carry one sample timed
+ * by the gyro clock; a modern packet whose first sample is invalid gets a
+ * nominal cadence derived from the frame rate.
+ * @param[in] imu_packet the raw IMU packet
+ * @param[in] sensor_info the sensor information
+ * @return one sensor-clock timestamp per packet sample
+ */
+Eigen::ArrayX<uint64_t> imu_sample_timestamps(
+    const ouster::sdk::core::ImuPacket& imu_packet,
+    const ouster::sdk::core::SensorInfo& sensor_info);
+
+/**
  * Parse an imu packet message into a ROS imu message
  * @param[in] imu_packet the raw IMU packet populated by read_imu_packet
  * @param[in] timestamp the timestamp to give the resulting ROS message
