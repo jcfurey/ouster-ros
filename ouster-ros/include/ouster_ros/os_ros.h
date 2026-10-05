@@ -112,6 +112,33 @@ sensor_msgs::msg::LaserScan lidar_scan_to_laser_scan_msg(
     const int return_index);
 
 /**
+ * As above, additionally rotating the scan by the residual azimuth of the
+ * selected ring that destaggering leaves uncorrected.
+ * @param[in] azimuth_correction_rad true azimuth minus the destaggered column
+ * azimuth for the ring, i.e. 2*pi*pixel_shift/w - beam_azimuth (radians)
+ * @remark see laser_scan_azimuth_correction()
+ */
+sensor_msgs::msg::LaserScan lidar_scan_to_laser_scan_msg(
+    const ouster::sdk::core::LidarScan& ls,
+    const rclcpp::Time& timestamp,
+    const std::string &frame,
+    const ouster::sdk::core::LidarMode lidar_mode,
+    const uint16_t ring, bool nan_is_inf,
+    const std::vector<int>& pixel_shift_by_row,
+    const int return_index,
+    double azimuth_correction_rad);
+
+/**
+ * Residual azimuth of a destaggered ring: destaggering by pixel_shift_by_row
+ * approximates the ring's calibrated beam azimuth to whole columns, and some
+ * firmware releases offset every shift by a constant.
+ * @return azimuth correction in radians, or 0 when the ring is out of range
+ */
+double laser_scan_azimuth_correction(const std::vector<int>& pixel_shift_by_row,
+                                     const std::vector<double>& beam_azimuth_deg,
+                                     uint16_t ring, uint32_t columns_per_frame);
+
+/**
  * Parse a LidarPacket and generate the Telemetry message
  * @param[in] lidar_packet lidar packet to parse telemetry data from
  * @param[in] timestamp the timestamp to give the resulting ROS message

@@ -45,6 +45,9 @@ class LaserScanProcessor {
                            pixel_shift_by_row.begin(),
                            [](auto c) { return c - 31; });
         }
+        azimuth_correction_rad_ = laser_scan_azimuth_correction(
+            pixel_shift_by_row, info.beam_azimuth_angles, ring,
+            info.format.columns_per_frame);
     }
 
    private:
@@ -53,7 +56,8 @@ class LaserScanProcessor {
         for (size_t i = 0; i < scan_msgs.size(); ++i) {
             *scan_msgs[i] =
                 lidar_scan_to_laser_scan_msg(lidar_scan, msg_ts, frame, ld_mode,
-                                             ring_, nan_is_inf_, pixel_shift_by_row, i);
+                                             ring_, nan_is_inf_, pixel_shift_by_row, i,
+                                             azimuth_correction_rad_);
         }
 
         if (post_processing_fn) post_processing_fn(scan_msgs);
@@ -78,6 +82,7 @@ class LaserScanProcessor {
     ouster::sdk::core::LidarMode ld_mode;
     uint16_t ring_;
     bool nan_is_inf_;
+    double azimuth_correction_rad_ = 0.0;
     std::vector<int> pixel_shift_by_row;
     OutputType scan_msgs;
     PostProcessingFn post_processing_fn;
